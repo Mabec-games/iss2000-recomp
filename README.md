@@ -1,4 +1,13 @@
+<p align="center"><img src="docs/logo.png" alt="Mabecs International Superstar Soccer 2000" width="640"></p>
+
 # Mabecs International Superstar Soccer 2000 - Widescreen build
+
+**A true widescreen version of the Nintendo 64 classic.** The original game was made for 4:3 TVs; this build renders
+the full 16:9 (or wider) view at your screen's resolution. Players and the ball stay visible all the way to the edges
+of the screen, and the stadium sky fills the whole width instead of leaving black bars.
+
+<p align="center"><img src="docs/screenshot-widescreen.jpg" alt="Widescreen match: Nigeria vs Germany" width="100%"><br>
+<em>A match in native 16:9 widescreen at 2560x1440, with the original HUD.</em></p>
 
 Native Linux port of **International Superstar Soccer 2000** (Nintendo 64, USA Rev 1) made by static
 recompilation with [N64Recomp](https://github.com/N64Recomp/N64Recomp), running on
@@ -9,7 +18,8 @@ renderer.
 SHA-1 `47a993fe1316dfd9e208603370d3dddae05f1d1b`.
 
 ## Features
-- Widescreen with widened culling (no player pop-in) and a stretched stadium sky
+- **Widescreen**: 16:9 and wider, with the game's culling widened (no player pop-in at the edges) and the stadium sky
+  extended to the full width; HUD stays in its original layout
 - Window-scaled resolution, 4x MSAA
 - Controller Pak saves (raw 32 KB `.mpk`, Project64-compatible)
 - Launcher: ROM selection (file picker or drag & drop), Fullscreen/Widescreen options
