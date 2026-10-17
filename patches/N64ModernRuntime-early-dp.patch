@@ -1,0 +1,32 @@
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 17d7a47..bd77995 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -1,4 +1,5 @@
+ #include <thread>
++#include <cstdlib>
+ #include <atomic>
+ #include <chrono>
+ #include <cinttypes>
+@@ -374,11 +375,20 @@ void gfx_thread_func(uint8_t* rdram, moodycamel::LightweightSemaphore* thread_re
+                 PTR(u64) displaylist = task_action->task.t.data_ptr;
+                 ultramodern::extensions::on_displaylist_submitted(displaylist);
+ 
++                // ISS: optionally report RDP completion before rendering, so the game sees the same completion
++                // timing no matter how long the host renderer takes (ISS_EARLY_DP=1).
++                static const bool early_dp = std::getenv("ISS_EARLY_DP") != nullptr && std::string(std::getenv("ISS_EARLY_DP")) == "1";
++                if (early_dp) {
++                    dp_complete();
++                }
++
+                 [[maybe_unused]] auto renderer_start = std::chrono::high_resolution_clock::now();
+                 renderer_context->send_dl(&task_action->task);
+                 [[maybe_unused]] auto renderer_end = std::chrono::high_resolution_clock::now();
+ 
+-                dp_complete();
++                if (!early_dp) {
++                    dp_complete();
++                }
+                 // TODO hook the parsed event up to the actual parsing point when a callback is added to RT64.
+                 ultramodern::extensions::on_displaylist_parsed(displaylist);
+                 ultramodern::extensions::on_displaylist_completed(displaylist);
