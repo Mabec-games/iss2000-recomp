@@ -1,0 +1,18 @@
+# Game data and anything derived from it (never commit)
+*.z64
+*.n64
+*.v64
+baserom.z64
+recomp/RecompiledFuncs/
+recomp/RecompiledFuncsTrace/
+recomp/rsp/
+analysis/
+# Third-party checkouts, toolchains, builds
+ext/
+.venv/
+build*/
+dist/
+run/
+attic/
+img/
+__pycache__/
