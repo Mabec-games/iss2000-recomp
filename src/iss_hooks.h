@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 void iss_on_rom_read(uint8_t* rdram, recomp_context* ctx);
+void iss_resolution_option(uint8_t* rdram, recomp_context* ctx);
 void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx);
 void iss_debug_sprite(uint8_t* rdram, recomp_context* ctx);
 void iss_debug_force_res(uint8_t* rdram, recomp_context* ctx);

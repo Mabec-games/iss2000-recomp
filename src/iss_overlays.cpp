@@ -13,12 +13,18 @@
 #include <vector>
 #include <algorithm>
 #include <cstdlib>
+#include <atomic>
 
 #include "recomp.h"
 #include "librecomp/overlays.hpp"
 #include "generated/iss_sections.h"
 
+// True while the match engine overlay (ROM 0x32F090, loaded at 0x803AC000) is resident, i.e. during a match.
+std::atomic<bool> iss_in_match{ false };
+
 namespace {
+    constexpr uint32_t match_engine_rom = 0x32F090;
+
     bool debug_enabled() {
         static const bool enabled = std::getenv("ISS_DEBUG") != nullptr;
         return enabled;
@@ -53,6 +59,7 @@ namespace {
                     fprintf(stderr, "[ovl] unload %s @ %08X (overwritten by rom %06X)\n", s->name, (uint32_t)it->ram, rom);
                 }
                 unload_overlays(it->ram, s->text_size);
+                if (s->rom == match_engine_rom) iss_in_match = false;
                 it = loaded.erase(it);
                 continue;
             }
@@ -79,6 +86,7 @@ extern "C" void iss_on_rom_read(uint8_t* rdram, recomp_context* ctx) {
             fprintf(stderr, "[ovl] load %s @ %08X\n", s->name, (uint32_t)ram);
         }
         loaded.push_back({ s, ram });
+        if (s->rom == match_engine_rom) iss_in_match = true;
     }
     else {
         unload_overlapping(ram, size, rom);

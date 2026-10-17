@@ -49,8 +49,19 @@ extern "C" void iss_widen_cull_far_plane(uint8_t* rdram, recomp_context* ctx) {
     }
 }
 
-// Debug: force the in-game Resolution option. Runs right before func_80001E04 copies the option byte
-// (0x8006C5F1) into the game state's hi-res flag, so overriding the byte is enough.
+// In-game Resolution option. The game's High mode (640x480 interlaced, Expansion Pak) only exists to raise the
+// N64's output resolution; RT64 already renders at the window's resolution, so it adds nothing here, and switching
+// to it mid-session leaves the game too fast / in 4:3. Every request to change the option goes through
+// func_80001D1C(value) (Options menu and save loading), so the requested value is turned into Low there.
+//   ISS_ALLOW_HIRES=1   let the game use High mode as chosen (debugging)
+extern "C" void iss_resolution_option(uint8_t* rdram, recomp_context* ctx) {
+    static const bool allow_hires = std::getenv("ISS_ALLOW_HIRES") != nullptr;
+    if (!allow_hires) {
+        ctx->r4 = 0;
+    }
+}
+
+// Debug: ISS_FORCE_RES=0|1 forces the mode right before func_80001E04 applies the option byte (0x8006C5F1).
 extern "C" void iss_debug_force_res(uint8_t* rdram, recomp_context* ctx) {
     static const char* force = std::getenv("ISS_FORCE_RES");
     if (force != nullptr) {
@@ -131,10 +142,12 @@ extern "C" void iss_sky_stretch_end(uint8_t* rdram, recomp_context* ctx) {
     }
 }
 
-// Debug: ISS_SWITCH_RES_AT=<seconds>:<value> performs the Options menu's Resolution change (func_80001D1C)
-// once, <seconds> after the first frame: store the option byte (0x8006C5F1), start the game's 25-frame
-// switch countdown (0x8006C5F0) and clear the two flags the handler clears.
+// Debug: ISS_SWITCH_RES_AT=<seconds>:<value> changes the Resolution option once, <seconds> after the first frame,
+// by calling the game's own Options handler func_80001D1C(value) (registers are saved and restored around it).
+extern "C" void func_80001D1C(uint8_t* rdram, recomp_context* ctx);
+extern "C" void iss_debug_memdump(uint8_t* rdram);
 extern "C" void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx) {
+    iss_debug_memdump(rdram);
     static const char* spec = std::getenv("ISS_SWITCH_RES_AT");
     static bool done = false;
     static auto start = std::chrono::steady_clock::now();
@@ -143,9 +156,22 @@ extern "C" void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx) {
     if (sscanf(spec, "%f:%d", &at, &value) < 1) return;
     if (std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() < at) return;
     done = true;
-    fprintf(stderr, "[debug] switching Resolution option to %d\n", value);
-    MEM_B(0, (gpr)(int32_t)0x8006C5F1) = (uint8_t)value;
-    MEM_B(0, (gpr)(int32_t)0x8006C5F0) = 0x19;
-    MEM_B(0, (gpr)(int32_t)0x8006C590) = 0;
-    MEM_W(0, (gpr)(int32_t)0x800A0A04) = 0;
+    fprintf(stderr, "[debug] calling func_80001D1C(%d)\n", value);
+    recomp_context saved = *ctx;
+    ctx->r4 = value;
+    func_80001D1C(rdram, ctx);
+    *ctx = saved;
+}
+
+// Debug: ISS_MEMDUMP_AT=<seconds>:<file> writes main RAM 0x80000000-0x801B0000 (as stored) to <file> once.
+extern "C" void iss_debug_memdump(uint8_t* rdram) {
+    static const char* spec = std::getenv("ISS_MEMDUMP_AT");
+    static bool done = false;
+    static auto start = std::chrono::steady_clock::now();
+    if (spec == nullptr || done) return;
+    float at = 0; char path[512] = {};
+    if (sscanf(spec, "%f:%511s", &at, path) < 2) return;
+    if (std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() < at) return;
+    done = true;
+    if (FILE* f = fopen(path, "wb")) { fwrite(rdram, 1, 0x1B0000, f); fclose(f); fprintf(stderr, "[debug] memory dumped\n"); }
 }

@@ -2,8 +2,10 @@
 #include <cstring>
 #include <variant>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -15,6 +17,8 @@
 #include "ultramodern/config.hpp"
 
 #include "iss_render.h"
+
+extern std::atomic<bool> iss_in_match;  // src/iss_overlays.cpp
 
 // Adapted from Zelda64Recomp's src/main/rt64_render_context.cpp (GPL-3.0).
 
@@ -126,7 +130,10 @@ void set_application_user_config(RT64::Application* application, const ultramode
     application->userConfig.refreshRate = to_rt64(config.rr_option);
     application->userConfig.refreshRateTarget = config.rr_manual_value;
     application->userConfig.internalColorFormat = to_rt64(config.hpfb_option);
-    application->userConfig.displayBuffering = RT64::UserConfiguration::DisplayBuffering::Triple;
+    // ISS_BUFFERING=double|triple (debug/tuning; triple by default).
+    const char* buffering = std::getenv("ISS_BUFFERING");
+    application->userConfig.displayBuffering = (buffering != nullptr && std::string(buffering) == "double")
+        ? RT64::UserConfiguration::DisplayBuffering::Double : RT64::UserConfiguration::DisplayBuffering::Triple;
 }
 
 ultramodern::renderer::SetupResult map_setup_result(RT64::Application::SetupResult rt64_result) {
@@ -257,6 +264,15 @@ iss::renderer::RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::W
         return;
     }
 
+    // ISS_PRESENT=console|skip|early (debug/tuning): RT64 presentation mode.
+    if (const char* present = std::getenv("ISS_PRESENT")) {
+        std::string m = present;
+        app->enhancementConfig.presentation.mode = m == "early" ? RT64::EnhancementConfiguration::Presentation::Mode::PresentEarly
+            : m == "skip" ? RT64::EnhancementConfiguration::Presentation::Mode::SkipBuffering
+            : RT64::EnhancementConfiguration::Presentation::Mode::Console;
+        app->updateEnhancementConfig();
+    }
+
     // Set the application's fullscreen state.
     app->setFullScreen(cur_config.wm_option == ultramodern::renderer::WindowMode::Fullscreen);
 }
@@ -342,6 +358,35 @@ void iss::renderer::RT64Context::send_dl(const OSTask* task) {
             }
         }
     } timing_log{ dl_start };
+    // ISS_FPS=1: print frames per second every 2 seconds (to diagnose speed problems on players' machines).
+    static const bool fps_log = std::getenv("ISS_FPS") != nullptr;
+    if (fps_log) {
+        static auto window_start = std::chrono::steady_clock::now();
+        static int frames = 0;
+        frames++;
+        double elapsed = std::chrono::duration<double>(dl_start - window_start).count();
+        if (elapsed >= 2.0) {
+            fprintf(stderr, "[fps] %.1f frames/s, last renderer time %.2f ms\n", frames / elapsed,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - dl_start).count());
+            frames = 0;
+            window_start = dl_start;
+        }
+    }
+    // ISS_MAX_FPS=<n>: cap the frame rate during matches only. The game advances one step per drawn frame, so this
+    // also caps match speed; holding back the "frame finished" signal makes it wait as for the real N64 RDP.
+    static const int max_fps = std::getenv("ISS_MAX_FPS") ? std::atoi(std::getenv("ISS_MAX_FPS")) : 0;
+    if (max_fps > 0 && iss_in_match.load()) {
+        static auto next_allowed = std::chrono::steady_clock::now();
+        std::this_thread::sleep_until(next_allowed);
+        auto now = std::chrono::steady_clock::now();
+        auto interval = std::chrono::nanoseconds(1000000000LL / max_fps);
+        next_allowed = std::max(next_allowed + interval, now - interval);
+    }
+    // Debug: ISS_DL_DELAY_MS=<n> simulates a slow renderer.
+    static const int dl_delay_ms = std::getenv("ISS_DL_DELAY_MS") ? std::atoi(std::getenv("ISS_DL_DELAY_MS")) : 0;
+    if (dl_delay_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(dl_delay_ms));
+    }
     static const bool debug = std::getenv("ISS_DEBUG") != nullptr;
     static uint32_t dl_count = 0;
     if (debug && (++dl_count % 60) == 1) {

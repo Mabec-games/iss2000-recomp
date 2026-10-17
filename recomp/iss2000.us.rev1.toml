@@ -74,3 +74,9 @@ text = "iss_sky_stretch_end(rdram, ctx);"
 func = "func_80000B28"
 before_vram = 0x80000B28
 text = "iss_debug_switch_res(rdram, ctx);"
+
+# Resolution option: High mode is redirected to Low at the Options handler (see src/iss_widescreen.cpp).
+[[patches.hook]]
+func = "func_80001D1C"
+before_vram = 0x80001D1C
+text = "iss_resolution_option(rdram, ctx);"

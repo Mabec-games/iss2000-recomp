@@ -130,6 +130,9 @@ namespace {
                     if (event.key.keysym.scancode == SDL_SCANCODE_F11 && !event.key.repeat) {
                         toggle_fullscreen();
                     }
+                    else if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE && !event.key.repeat) {
+                        ultramodern::quit();
+                    }
                     break;
                 case SDL_CONTROLLERDEVICEREMOVED:
                     if (controller != nullptr && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {
@@ -222,14 +225,14 @@ namespace {
             out.resize(available);
             int got = SDL_AudioStreamGet(audio_stream, out.data(), available);
             // Drop audio if more than 100ms is already queued so latency doesn't build up.
-            static const bool audio_debug = std::getenv("ISS_AUDIO_DEBUG") != nullptr;
+            static const bool audio_debug = std::getenv("ISS_AUDIO_DEBUG") != nullptr || std::getenv("ISS_FPS") != nullptr;
             uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
             if (audio_debug) {
                 static auto last = SDL_GetTicks();
                 static uint32_t min_q = UINT32_MAX, max_q = 0, chunks = 0, empties = 0;
                 min_q = std::min(min_q, queued); max_q = std::max(max_q, queued); chunks++;
                 if (queued == 0) empties++;
-                if (SDL_GetTicks() - last >= 1000) {
+                if (SDL_GetTicks() - last >= 2000) {
                     double ms = 1000.0 / (output_sample_rate * 2.0 * sizeof(float));
                     fprintf(stderr, "[audio] queued min %.1f ms max %.1f ms, %u chunks, %u ran dry, rate %u\n", min_q * ms, max_q * ms, chunks, empties, game_sample_rate);
                     last = SDL_GetTicks(); min_q = UINT32_MAX; max_q = 0; chunks = 0; empties = 0;
@@ -251,7 +254,7 @@ namespace {
         // The game tops its audio up to a small target based on this value. Report two VIs' worth less than is
         // really queued so it keeps a cushion; reporting the exact level left the output running dry several
         // times per second (audible crackles).
-        constexpr uint64_t cushion_vis = 2;
+        static const uint64_t cushion_vis = std::getenv("ISS_AUDIO_CUSHION") ? std::strtoull(std::getenv("ISS_AUDIO_CUSHION"), nullptr, 10) : 2;
         uint64_t queued_bytes = SDL_GetQueuedAudioSize(audio_device);
         uint64_t queued_frames = queued_bytes / (2 * sizeof(float)) * game_sample_rate / output_sample_rate;
         uint64_t cushion = cushion_vis * game_sample_rate / 60;

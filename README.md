@@ -29,8 +29,15 @@ SHA-1 `47a993fe1316dfd9e208603370d3dddae05f1d1b`.
 Get the AppImage from [Releases](../../releases). Runs on Debian 12+, Ubuntu 22.04+ and newer distros
 (glibc 2.34+, Vulkan GPU). Data is stored in `~/.local/share/iss2000recomp`.
 
+## Controls
+Gamepad or keyboard (arrows/WASD stick, X = A, C = B, Z = Z, Enter = Start, Q/E = L/R, IJKL = C buttons).
+**F11** toggles fullscreen, **Esc** quits.
+
+## Notes
+- The in-game Resolution option always runs in the normal mode: RT64 already renders at your screen's
+  resolution, and the N64's 640x480 High mode broke speed/widescreen when switched mid-game.
+
 ## Known issues
-- **Fullscreen on high-refresh monitors can run the game at double speed.** Use windowed mode for now.
 - No rumble; no controller remapping yet.
 
 ## Building
