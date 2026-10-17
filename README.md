@@ -38,6 +38,9 @@ Gamepad or keyboard (arrows/WASD stick, X = A, C = B, Z = Z, Enter = Start, Q/E 
   resolution, and the N64's 640x480 High mode broke speed/widescreen when switched mid-game.
 
 ## Known issues
+- **v1.0 only:** the in-game Resolution: High option works as intended in windowed mode only. In fullscreen on
+  high-refresh-rate monitors (e.g. 144/240 Hz) it can make the game run at double speed. If you play fullscreen on
+  v1.0, set Resolution to Low in the game's options (v1.1 and later do this automatically).
 - No rumble; no controller remapping yet.
 
 ## Building
