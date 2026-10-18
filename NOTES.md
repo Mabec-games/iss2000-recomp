@@ -176,8 +176,24 @@ don't touch the real ROM store / paks, and ISS_INPUT_FILE to press buttons. A dr
 `hold <buttons>` / `shot <name>` steps) worked well; title screen START is around 40 s after boot.
 gdb: ptrace_scope=1 blocks attaching, so run the game under gdb inside gamescope (pkill -INT to break in).
 
+## Windows build (2026-10-18)
+- Toolchain: VS 2022 Build Tools 14.44 with its bundled clang-cl 19.1.5, CMake and LLVM tools; Ninja; Python 3.12.
+  `tools\build_windows.bat` finds VS with vswhere, enters vcvars64, puts VC\Tools\Llvm\x64\bin on PATH (RT64's
+  shader preprocessing calls `clang` directly) and builds Release into build-win\. Full build ~25 min on 4 cores.
+- SDL2: the VC dev package RT64 ships (ext/rt64/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3). Its headers have
+  no SDL2/ directory, so CMake copies them to build-win/sdl2-include/SDL2. RT64 links SDL2 by bare name with a
+  directory-scoped link_directories(), so the exe adds that lib dir itself.
+- prefix_syms.py works unchanged on COFF archives with llvm-nm / llvm-objcopy (CMake leaves CMAKE_NM/OBJCOPY
+  empty for clang-cl; found next to the compiler). Same symbol counts as on Linux.
+- Exe: WIN32 subsystem + SDL2main (WinMain, UTF-8 argv), NOMINMAX (windows.h min/max broke std::min/max), icon
+  from assets/iss2000recomp.png (tools/png_to_ico.py, PNG-in-ICO) via an .rc. Post-build copies SDL2.dll,
+  dxcompiler.dll, dxil.dll next to the exe. -march=nehalem is passed as /clang:-march=nehalem.
+- Host (src/main.cpp): window handle = HWND + GetCurrentThreadId() (no SDL_WINDOW_VULKAN; RT64 picks D3D12 or
+  Vulkan), data dir %APPDATA%\iss2000recomp (ISS_DATA_DIR still wins), paths passed as UTF-8, per-monitor-v2 DPI
+  awareness, stderr goes to the parent console when started from a terminal and not redirected. nfd uses the
+  native Windows dialog. Launcher code unchanged.
+- Verified: USA boot/intro/title at the usual 60/30 fps with steady audio; Europe Fr,It at 50 Hz settling at 25 fps.
+- Package: tools\make_windows_zip.ps1 -> dist\Mabecs_ISS2000_Widescreen-Windows-x64.zip (exe, 3 DLLs, licenses).
+
 ## Possible next steps
-- Windows build: host changes are small (HWND + thread id window handle, %APPDATA% data dir, nfd native dialog,
-  zip with exe + SDL2.dll + dxcompiler/dxil.dll, clang-cl/MSVC flags). Needs a Windows machine (Claude Code on it,
-  or OpenSSH from here) with VS 2022 Build Tools + Clang, CMake, Ninja, Git, Python, and the ROM.
 - Rumble Pak option, controller remapping, texture-pack dump/load (ISS_DEV / ISS_TEXTURE_PACK idea).

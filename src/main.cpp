@@ -15,6 +15,9 @@
 
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_syswm.h"
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #undef None
 #undef Status
 #undef LockMask
@@ -97,7 +100,10 @@ namespace {
     }
 
     ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
-        uint32_t flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN;
+        uint32_t flags = SDL_WINDOW_RESIZABLE;
+#if defined(__linux__)
+        flags |= SDL_WINDOW_VULKAN;
+#endif
         if (ultramodern::renderer::get_graphics_config().wm_option == ultramodern::renderer::WindowMode::Fullscreen) {
             flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
         }
@@ -109,7 +115,14 @@ namespace {
             fprintf(stderr, "Failed to create window: %s\n", SDL_GetError());
             std::exit(EXIT_FAILURE);
         }
+#if defined(_WIN32)
+        SDL_SysWMinfo wm_info;
+        SDL_VERSION(&wm_info.version);
+        SDL_GetWindowWMInfo(window, &wm_info);
+        return ultramodern::renderer::WindowHandle{ wm_info.info.win.window, GetCurrentThreadId() };
+#else
         return ultramodern::renderer::WindowHandle{ window };
+#endif
     }
 
     void update_gfx(void*) {
@@ -405,19 +418,33 @@ extern "C" float iss_cull_widen_factor(void) {
 }
 
 // Per-user data folder (stored ROM, Controller Pak, settings): $ISS_DATA_DIR, else
-// $XDG_DATA_HOME/iss2000recomp, else ~/.local/share/iss2000recomp.
+// $XDG_DATA_HOME/iss2000recomp, else ~/.local/share/iss2000recomp (Windows: %APPDATA%\iss2000recomp).
 static std::filesystem::path get_data_dir() {
+#ifdef _WIN32
+    if (const wchar_t* d = _wgetenv(L"ISS_DATA_DIR")) return d;
+    if (const wchar_t* a = _wgetenv(L"APPDATA"); a != nullptr && a[0] != L'\0') return std::filesystem::path(a) / "iss2000recomp";
+#else
     if (const char* d = std::getenv("ISS_DATA_DIR")) return d;
+#endif
     if (const char* x = std::getenv("XDG_DATA_HOME"); x != nullptr && x[0] != '\0') return std::filesystem::path(x) / "iss2000recomp";
     if (const char* h = std::getenv("HOME")) return std::filesystem::path(h) / ".local" / "share" / "iss2000recomp";
     return std::filesystem::current_path() / "iss2000recomp_data";
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // GUI program: when started from a terminal (and the log isn't redirected), show the log there.
+    if (GetStdHandle(STD_ERROR_HANDLE) == nullptr && AttachConsole(ATTACH_PARENT_PROCESS)) {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+    // Sharp launcher and game windows on scaled displays (sizes are then in pixels).
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+#endif
     const std::filesystem::path data_dir = get_data_dir();
     std::filesystem::create_directories(data_dir);
     recomp::register_config_path(data_dir);
-    iss_controller_pak_set_data_dir(data_dir.string().c_str());
+    iss_controller_pak_set_data_dir(reinterpret_cast<const char*>(data_dir.u8string().c_str()));
 
     for (size_t i = 0; i < iss_num_versions; i++) {
         const IssVersion& v = iss_versions[i];
@@ -444,7 +471,7 @@ int main(int argc, char** argv) {
         }
         else if (argv[i][0] != '-') {
             recomp::RomValidationError err;
-            cli_version = iss::select_rom_any_version(std::filesystem::path(argv[i]), err);
+            cli_version = iss::select_rom_any_version(std::filesystem::path(reinterpret_cast<const char8_t*>(argv[i])), err);
             if (cli_version == nullptr) {
                 fprintf(stderr, "ROM rejected (error %d): a USA (Rev 1) or Europe ROM of International Superstar Soccer 2000 is required.\n", (int)err);
             }

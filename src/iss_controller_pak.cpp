@@ -119,7 +119,7 @@ namespace {
 
 extern "C" void iss_controller_pak_set_data_dir(const char* dir) {
     std::lock_guard lock{ pak_mutex };
-    data_dir = dir;
+    data_dir = std::filesystem::path(reinterpret_cast<const char8_t*>(dir));  // UTF-8
 }
 
 extern "C" bool iss_controller_pak_inserted(int channel) {

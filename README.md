@@ -9,13 +9,13 @@ of the screen, and the stadium sky fills the whole width instead of leaving blac
 <p align="center"><img src="docs/screenshot-widescreen.jpg" alt="Widescreen match: Nigeria vs Germany" width="100%"><br>
 <em>A match in native 16:9 widescreen at 2560x1440, with the original HUD.</em></p>
 
-Native Linux port of **International Superstar Soccer 2000** (Nintendo 64: USA Rev 1 and both European versions) made by static
+Native Linux and Windows port of **International Superstar Soccer 2000** (Nintendo 64: USA Rev 1 and both European versions) made by static
 recompilation with [N64Recomp](https://github.com/N64Recomp/N64Recomp), running on
 [N64ModernRuntime](https://github.com/N64Recomp/N64ModernRuntime) with the [RT64](https://github.com/rt64/rt64)
 renderer.
 
-**No game data is included.** You need your own ROM. One AppImage supports all three versions; the launcher detects
-which one you give it:
+**No game data is included.** You need your own ROM. One build (AppImage or Windows zip) supports all three versions;
+the launcher detects which one you give it:
 
 | ROM | SHA-1 |
 |---|---|
@@ -49,8 +49,11 @@ v1.2 adds support for both European (PAL) releases of the game, in the same AppI
 - Gamepad and keyboard input
 
 ## Download
-Get the AppImage from [Releases](../../releases). Runs on Debian 12+, Ubuntu 22.04+ and newer distros
-(glibc 2.34+, Vulkan GPU). Data is stored in `~/.local/share/iss2000recomp`.
+Get it from [Releases](../../releases).
+- **Linux**: the AppImage. Runs on Debian 12+, Ubuntu 22.04+ and newer distros (glibc 2.34+, Vulkan GPU).
+  Data is stored in `~/.local/share/iss2000recomp`.
+- **Windows**: the zip. Extract it anywhere and run `ISS2000Recompiled.exe` (keep the DLLs next to it).
+  Windows 10/11 64-bit with a Direct3D 12 or Vulkan GPU. Data is stored in `%APPDATA%\iss2000recomp`.
 
 ## Controls
 Gamepad or keyboard (arrows/WASD stick, X = A, C = B, Z = Z, Enter = Start, Q/E = L/R, IJKL = C buttons).
@@ -73,6 +76,10 @@ See [NOTES.md](NOTES.md) for the full pipeline (overlay discovery, symbol genera
 Debian 12 portable build, AppImage packaging). Third-party sources go in `ext/` (N64Recomp, N64ModernRuntime,
 RT64; see NOTES.md); apply `patches/N64ModernRuntime-vi-rate.patch` to N64ModernRuntime (50 Hz support for the
 European versions). Generated code is produced locally from your ROMs and is not part of this repository.
+
+Windows: with Visual Studio 2022 (Build Tools: "Desktop development with C++" + "C++ Clang tools for Windows") and
+Python 3, run `tools\build_windows.bat` (clang-cl + Ninja, output in `build-win\`), then
+`powershell -ExecutionPolicy Bypass -File tools\make_windows_zip.ps1` for the release zip in `dist\`.
 
 ## License
 GPL-3.0 (see `LICENSE`), as the program includes N64ModernRuntime and code adapted from Zelda64Recomp.
