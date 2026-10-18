@@ -193,6 +193,7 @@ gdb: ptrace_scope=1 blocks attaching, so run the game under gdb inside gamescope
   awareness, stderr goes to the parent console when started from a terminal and not redirected. nfd uses the
   native Windows dialog. Launcher code unchanged.
 - Verified: USA boot/intro/title at the usual 60/30 fps with steady audio; Europe Fr,It at 50 Hz settling at 25 fps.
+  Launcher confirmed by the user on Windows (from the release zip): ROM selection and an EU ROM loading and playing.
 - Package: tools\make_windows_zip.ps1 -> dist\Mabecs_ISS2000_Widescreen-Windows-x64.zip (exe, 3 DLLs, licenses).
 
 ## Possible next steps
