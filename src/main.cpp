@@ -1,8 +1,8 @@
 // ISS 2000 Recompiled — host executable.
 //
-// Usage: iss2000recomp [path/to/rom.z64]
-// The first run needs the ROM path; it is validated and stored by the runtime, after which the game
-// boots directly (via the runtime's --game CLI path).
+// Usage: iss2000recomp [path/to/rom.z64] [--no-launcher]
+// Supports the USA (Rev 1) and Europe ROMs (src/iss_version.cpp). A ROM picked in the launcher or given on
+// the command line is validated and stored by the runtime; the game then boots via its --game CLI path.
 #include <cstdio>
 #include <cstring>
 #include <cinttypes>
@@ -30,18 +30,13 @@
 
 #include "iss_render.h"
 #include "launcher.h"
+#include "iss_version.h"
 
-extern "C" void recomp_entrypoint(uint8_t* rdram, recomp_context* ctx);
 extern RspUcodeFunc aspMain;
 extern "C" void iss_controller_pak_set_data_dir(const char* dir);
 extern "C" bool iss_controller_pak_inserted(int channel);
 
 namespace {
-    const std::u8string game_id = u8"iss2000.n64.us.1.1";
-    const std::string mod_game_id = "iss2000";
-    // XXH3-64 of the USA Rev 1 ROM (SHA1 47a993fe1316dfd9e208603370d3dddae05f1d1b).
-    constexpr uint64_t rom_hash = 0xA8D9809FB90E36AAULL;
-
     SDL_Window* window = nullptr;
     SDL_AudioDeviceID audio_device = 0;
     SDL_AudioStream* audio_stream = nullptr;
@@ -211,6 +206,12 @@ namespace {
         if (audio_device == 0 || audio_stream == nullptr) {
             return;
         }
+        // A negative length from the game (its audio code underflows if the queue holds more than it expects,
+        // e.g. a PAL version forced to 60 Hz) arrives as a huge count; drop it instead of reading past RDRAM.
+        if (sample_count > game_sample_rate * 2) {
+            fprintf(stderr, "[audio] ignored bogus buffer of %zu samples\n", sample_count);
+            return;
+        }
         static std::vector<float> converted;
         converted.resize(sample_count);
         // Swap channels to undo the 32-bit word swap from endianness handling.
@@ -257,7 +258,7 @@ namespace {
         static const uint64_t cushion_vis = std::getenv("ISS_AUDIO_CUSHION") ? std::strtoull(std::getenv("ISS_AUDIO_CUSHION"), nullptr, 10) : 2;
         uint64_t queued_bytes = SDL_GetQueuedAudioSize(audio_device);
         uint64_t queued_frames = queued_bytes / (2 * sizeof(float)) * game_sample_rate / output_sample_rate;
-        uint64_t cushion = cushion_vis * game_sample_rate / 60;
+        uint64_t cushion = cushion_vis * game_sample_rate / ultramodern::get_vi_rate();
         return (size_t)(queued_frames > cushion ? queued_frames - cushion : 0);
     }
 
@@ -399,8 +400,6 @@ namespace {
 }
 
 
-void iss_register_overlays();
-
 extern "C" float iss_cull_widen_factor(void) {
     return cull_widen_factor.load();
 }
@@ -420,31 +419,34 @@ int main(int argc, char** argv) {
     recomp::register_config_path(data_dir);
     iss_controller_pak_set_data_dir(data_dir.string().c_str());
 
-    recomp::GameEntry game{};
-    game.rom_hash = rom_hash;
-    game.internal_name = "I.S.S.2000";
-    game.display_name = "International Superstar Soccer 2000";
-    game.game_id = game_id;
-    game.mod_game_id = mod_game_id;
-    game.save_type = recomp::SaveType::None;
-    game.is_enabled = true;
-    game.entrypoint_address = (gpr)(int32_t)0x80000400;
-    game.entrypoint = recomp_entrypoint;
-    recomp::register_game(game);
-
-    iss_register_overlays();
+    for (size_t i = 0; i < iss_num_versions; i++) {
+        const IssVersion& v = iss_versions[i];
+        recomp::GameEntry game{};
+        game.rom_hash = v.rom_hash;
+        game.internal_name = "I.S.S.2000";
+        game.display_name = "International Superstar Soccer 2000";
+        game.game_id = v.game_id;
+        game.mod_game_id = v.mod_game_id;
+        game.save_type = recomp::SaveType::None;
+        game.is_enabled = true;
+        game.entrypoint_address = (gpr)(int32_t)0x80000400;
+        game.entrypoint = v.entrypoint;
+        recomp::register_game(game);
+    }
 
     // Arguments: [rom path] [--no-launcher]. A ROM path is validated and stored like one picked in the launcher.
     std::vector<char*> args{ argv[0] };
     bool use_launcher = true;
+    const IssVersion* cli_version = nullptr;
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--no-launcher") == 0) {
             use_launcher = false;
         }
         else if (argv[i][0] != '-') {
-            recomp::RomValidationError err = recomp::select_rom(std::filesystem::path(argv[i]), game_id);
-            if (err != recomp::RomValidationError::Good) {
-                fprintf(stderr, "ROM rejected (error %d): the USA (Rev 1) ROM of International Superstar Soccer 2000 is required.\n", (int)err);
+            recomp::RomValidationError err;
+            cli_version = iss::select_rom_any_version(std::filesystem::path(argv[i]), err);
+            if (cli_version == nullptr) {
+                fprintf(stderr, "ROM rejected (error %d): a USA (Rev 1) or Europe ROM of International Superstar Soccer 2000 is required.\n", (int)err);
             }
         }
         else {
@@ -454,19 +456,33 @@ int main(int argc, char** argv) {
     recomp::check_all_stored_roms();
 
     iss::LauncherSettings settings = iss::load_launcher_settings(data_dir);
+    if (cli_version != nullptr) {
+        settings.version = cli_version->id;
+    }
+    const IssVersion* version = nullptr;
     if (use_launcher) {
-        if (!iss::run_launcher(game_id, data_dir, settings)) {
+        version = iss::run_launcher(data_dir, settings);
+        if (version == nullptr) {
             return EXIT_SUCCESS;
         }
     }
-    else if (!recomp::is_rom_valid(game_id)) {
-        fprintf(stderr, "No valid ROM stored; run without --no-launcher (or pass the ROM path) first.\n");
-        return EXIT_FAILURE;
+    else {
+        version = iss::stored_version(settings);
+        if (version == nullptr) {
+            fprintf(stderr, "No valid ROM stored; run without --no-launcher (or pass the ROM path) first.\n");
+            return EXIT_FAILURE;
+        }
     }
+    fprintf(stderr, "Version: %s\n", version->name);
+    iss_select_version(*version);
+    // ISS_VI_RATE=<hz> overrides the version's VI rate (debugging, PAL speed comparisons).
+    const char* vi_rate = std::getenv("ISS_VI_RATE");
+    ultramodern::set_vi_rate(vi_rate != nullptr ? (uint32_t)std::atoi(vi_rate) : version->pal ? 50 : 60);
+    version->register_overlays();
+
     static char game_flag[] = "--game";
-    static char game_name[] = "iss2000";
     args.push_back(game_flag);
-    args.push_back(game_name);
+    args.push_back(const_cast<char*>(version->mod_game_id));
 
     reset_audio();
     apply_graphics_config(settings);

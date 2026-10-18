@@ -1,7 +1,7 @@
 // Overlay tracking for ISS 2000.
 //
 // Every ROM read in the game goes through func_80003894(handle, dir, ram, rom, size); N64Recomp
-// injects a call to iss_on_rom_read() at its entry (see recomp/iss2000.us.rev1.toml). The runtime
+// injects a call to iss_on_rom_read() at its entry (see recomp/iss2000.us.rev1.toml; other versions likewise). The runtime
 // doesn't track overlays on its own, so this keeps its function map in sync with what the game
 // has loaded:
 //   * a read starting exactly at a code section's ROM address loads that section at the target RAM
@@ -17,13 +17,12 @@
 
 #include "recomp.h"
 #include "librecomp/overlays.hpp"
-#include "generated/iss_sections.h"
+#include "iss_version.h"
 
-// True while the match engine overlay (ROM 0x32F090, loaded at 0x803AC000) is resident, i.e. during a match.
+// True while the match engine overlay (US ROM 0x32F090, loaded at 0x803AC000) is resident, i.e. during a match.
 std::atomic<bool> iss_in_match{ false };
 
 namespace {
-    constexpr uint32_t match_engine_rom = 0x32F090;
 
     bool debug_enabled() {
         static const bool enabled = std::getenv("ISS_DEBUG") != nullptr;
@@ -38,9 +37,10 @@ namespace {
     std::vector<LoadedSection> loaded;
 
     const IssCodeSection* find_section_by_rom(uint32_t rom) {
-        for (const auto& s : iss_code_sections) {
-            if (s.rom == rom) {
-                return &s;
+        const IssVersion& v = iss_version();
+        for (size_t i = 0; i < v.num_sections; i++) {
+            if (v.sections[i].rom == rom) {
+                return &v.sections[i];
             }
         }
         return nullptr;
@@ -59,7 +59,7 @@ namespace {
                     fprintf(stderr, "[ovl] unload %s @ %08X (overwritten by rom %06X)\n", s->name, (uint32_t)it->ram, rom);
                 }
                 unload_overlays(it->ram, s->text_size);
-                if (s->rom == match_engine_rom) iss_in_match = false;
+                if (s->rom == iss_version().match_engine_rom) iss_in_match = false;
                 it = loaded.erase(it);
                 continue;
             }
@@ -86,7 +86,7 @@ extern "C" void iss_on_rom_read(uint8_t* rdram, recomp_context* ctx) {
             fprintf(stderr, "[ovl] load %s @ %08X\n", s->name, (uint32_t)ram);
         }
         loaded.push_back({ s, ram });
-        if (s->rom == match_engine_rom) iss_in_match = true;
+        if (s->rom == iss_version().match_engine_rom) iss_in_match = true;
     }
     else {
         unload_overlapping(ram, size, rom);

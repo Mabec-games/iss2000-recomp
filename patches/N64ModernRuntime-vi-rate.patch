@@ -1,0 +1,68 @@
+diff --git a/ultramodern/include/ultramodern/ultramodern.hpp b/ultramodern/include/ultramodern/ultramodern.hpp
+index 46aea61..e05bd95 100644
+--- a/ultramodern/include/ultramodern/ultramodern.hpp
++++ b/ultramodern/include/ultramodern/ultramodern.hpp
+@@ -110,6 +110,10 @@ void measure_input_latency();
+ void sleep_milliseconds(uint32_t millis);
+ void sleep_until(const std::chrono::high_resolution_clock::time_point& time_point);
+ 
++// VI rate in Hz (60 NTSC, 50 PAL)
++void set_vi_rate(uint32_t hz);
++uint32_t get_vi_rate();
++
+ // Graphics
+ uint32_t get_target_framerate(uint32_t original);
+ uint32_t get_display_refresh_rate();
+diff --git a/ultramodern/src/audio.cpp b/ultramodern/src/audio.cpp
+index 3198be0..bfac808 100644
+--- a/ultramodern/src/audio.cpp
++++ b/ultramodern/src/audio.cpp
+@@ -56,7 +56,7 @@ uint32_t ultramodern::get_remaining_audio_bytes() {
+     // there are enough samples even if the audio thread experiences a small amount of lag. This prevents
+     // audio popping on games that use the buffered audio byte count to determine how many samples
+     // to generate.
+-    uint32_t samples_per_vi = (sample_rate / 60);
++    uint32_t samples_per_vi = (sample_rate / ultramodern::get_vi_rate());
+     if (buffered_byte_count > static_cast<uint32_t>(buffer_offset_frames * sizeof(int16_t) * samples_per_vi)) {
+         buffered_byte_count -= static_cast<uint32_t>(buffer_offset_frames * sizeof(int16_t) * samples_per_vi);
+     }
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 17d7a47..4a23357 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -184,6 +185,17 @@ extern moodycamel::LightweightSemaphore graphics_shutdown_ready;
+ 
+ void set_dummy_vi(bool odd);
+ 
++// VI rate in Hz: 60 for NTSC, 50 for PAL. Set before the game starts.
++static std::atomic_uint32_t vi_rate = 60;
++
++void ultramodern::set_vi_rate(uint32_t hz) {
++    vi_rate = hz;
++}
++
++uint32_t ultramodern::get_vi_rate() {
++    return vi_rate.load();
++}
++
+ void vi_thread_func() {
+     ultramodern::set_native_thread_name("VI Thread");
+     // This thread should be prioritized over every other thread in the application, as it's what allows
+@@ -195,7 +207,7 @@ void vi_thread_func() {
+ 
+     while (!exited) {
+         // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
+-        auto next = ultramodern::get_start() + (total_vis * 1000000us) / (60 * ultramodern::get_speed_multiplier());
++        auto next = ultramodern::get_start() + (total_vis * 1000000us) / (vi_rate * ultramodern::get_speed_multiplier());
+         //if (next > std::chrono::high_resolution_clock::now()) {
+         //    printf("Sleeping for %" PRIu64 " us to get from %" PRIu64 " us to %" PRIu64 " us \n",
+         //        (next - std::chrono::high_resolution_clock::now()) / 1us,
+@@ -212,7 +224,7 @@ void vi_thread_func() {
+         ultramodern::sleep_until(next);
+         auto time_now = ultramodern::time_since_start();
+         // Calculate how many VIs have passed
+-        uint64_t new_total_vis = (time_now * (60 * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
++        uint64_t new_total_vis = (time_now * (vi_rate * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
+         if (new_total_vis > total_vis + 1) {
+             //printf("Skipped % " PRId64 " frames in VI interupt thread!\n", new_total_vis - total_vis - 1);
+         }

@@ -3,8 +3,9 @@
 // Only the block layer is emulated here; the game's own libultra filesystem code (osPfsInitPak,
 // osPfsReadWriteFile, ...) is recompiled unchanged and runs on top of it (see the "pfs_" names in
 // recomp/libultra_names.txt). The pak is a raw 32 KB image (same layout as Project64 .mpk files),
-// stored next to the other runtime data, one file per controller port:
-//     iss2000recomp_data/controllerpak_p1.mpk
+// stored next to the other runtime data, one file per controller port and ROM version, so saves of different
+// versions never mix:
+//     controllerpak_p1.mpk (USA), controllerpak_p1_ende.mpk (Europe En,De), ...
 // Port 1 has a pak by default; ISS_PAKS=0 disables it, ISS_PAKS=2 also inserts one in port 2, etc.
 #include <array>
 #include <cstdio>
@@ -16,6 +17,7 @@
 #include <string>
 
 #include "recomp.h"
+#include "iss_version.h"
 
 namespace {
     constexpr int32_t PFS_ERR_NOPACK = 1;
@@ -87,7 +89,7 @@ namespace {
         }
         Pak& pak = paks[channel];
         if (!pak.loaded) {
-            pak.path = data_dir / ("controllerpak_p" + std::to_string(channel + 1) + ".mpk");
+            pak.path = data_dir / ("controllerpak_p" + std::to_string(channel + 1) + iss_version().pak_suffix + ".mpk");
             std::ifstream in(pak.path, std::ios::binary);
             if (in && in.read(reinterpret_cast<char*>(pak.data.data()), pak_size)) {
                 fprintf(stderr, "[pak] port %d: loaded %s\n", channel + 1, pak.path.string().c_str());

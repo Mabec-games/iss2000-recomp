@@ -8,6 +8,7 @@
 //   0x800AA104  horizontal half-width at the far plane (set by func_80022E58 and func_800228D0)
 // The hooks below scale just those two by the window's aspect relative to 4:3. The projection and
 // the vertical extents (derived from registers, not from these globals) are left untouched.
+// Addresses and function names in this file are the US ones; the other versions' are in src/iss_version.cpp.
 #include <cstdlib>
 #include <chrono>
 #include <cstdio>
@@ -17,10 +18,11 @@
 
 #include "recomp.h"
 #include "iss_hooks.h"
+#include "iss_version.h"
 
 namespace {
-    constexpr gpr horizontal_tan_addr = (gpr)(int32_t)0x800A0984;
-    constexpr gpr far_half_width_addr = (gpr)(int32_t)0x800AA104;
+    gpr horizontal_tan_addr() { return (gpr)(int32_t)iss_version().horizontal_tan; }
+    gpr far_half_width_addr() { return (gpr)(int32_t)iss_version().far_half_width; }
     // Small margin so objects whose bounding sphere just grazes the edge don't flicker.
     constexpr float margin = 1.05f;
 
@@ -37,15 +39,15 @@ namespace {
 extern "C" void iss_widen_cull_frustum(uint8_t* rdram, recomp_context* ctx) {
     float factor = iss_cull_widen_factor();
     if (factor > 1.0f) {
-        scale_float(rdram, horizontal_tan_addr, factor * margin);
-        scale_float(rdram, far_half_width_addr, factor * margin);
+        scale_float(rdram, horizontal_tan_addr(), factor * margin);
+        scale_float(rdram, far_half_width_addr(), factor * margin);
     }
 }
 
 extern "C" void iss_widen_cull_far_plane(uint8_t* rdram, recomp_context* ctx) {
     float factor = iss_cull_widen_factor();
     if (factor > 1.0f) {
-        scale_float(rdram, far_half_width_addr, factor * margin);
+        scale_float(rdram, far_half_width_addr(), factor * margin);
     }
 }
 
@@ -65,7 +67,7 @@ extern "C" void iss_resolution_option(uint8_t* rdram, recomp_context* ctx) {
 extern "C" void iss_debug_force_res(uint8_t* rdram, recomp_context* ctx) {
     static const char* force = std::getenv("ISS_FORCE_RES");
     if (force != nullptr) {
-        MEM_B(0, (gpr)(int32_t)0x8006C5F1) = (uint8_t)std::atoi(force);
+        MEM_B(0, (gpr)(int32_t)iss_version().hires_option) = (uint8_t)std::atoi(force);
     }
 }
 
@@ -108,7 +110,6 @@ extern "C" void iss_debug_sprite(uint8_t* rdram, recomp_context* ctx) {
 // enable the extended GBI, set rect aspect to STRETCH, and afterwards back to AUTO. RT64 then maps
 // those rectangles across the full window width; everything else keeps its normal placement.
 namespace {
-    constexpr gpr gfx_pointer_addr = (gpr)(int32_t)0x800A09B0;
     constexpr uint32_t rt64_hook_opcode = 0xE0;          // G_SPNOOP on F3DEX2
     constexpr uint32_t rt64_hook_magic = 0x525464;       // "RT" 0x64
     constexpr uint32_t rt64_hook_op_enable = 0x1;
@@ -118,6 +119,7 @@ namespace {
     constexpr uint32_t g_ex_aspect_stretch = 0x1;
 
     void emit(uint8_t* rdram, uint32_t w0, uint32_t w1) {
+        gpr gfx_pointer_addr = (gpr)(int32_t)iss_version().gfx_pointer;
         gpr gfx = (gpr)(int32_t)MEM_W(0, gfx_pointer_addr);
         MEM_W(0, gfx) = w0;
         MEM_W(4, gfx) = w1;
@@ -144,7 +146,6 @@ extern "C" void iss_sky_stretch_end(uint8_t* rdram, recomp_context* ctx) {
 
 // Debug: ISS_SWITCH_RES_AT=<seconds>:<value> changes the Resolution option once, <seconds> after the first frame,
 // by calling the game's own Options handler func_80001D1C(value) (registers are saved and restored around it).
-extern "C" void func_80001D1C(uint8_t* rdram, recomp_context* ctx);
 extern "C" void iss_debug_memdump(uint8_t* rdram);
 extern "C" void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx) {
     iss_debug_memdump(rdram);
@@ -156,10 +157,10 @@ extern "C" void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx) {
     if (sscanf(spec, "%f:%d", &at, &value) < 1) return;
     if (std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() < at) return;
     done = true;
-    fprintf(stderr, "[debug] calling func_80001D1C(%d)\n", value);
+    fprintf(stderr, "[debug] calling the Options resolution handler (%d)\n", value);
     recomp_context saved = *ctx;
     ctx->r4 = value;
-    func_80001D1C(rdram, ctx);
+    iss_version().set_resolution(rdram, ctx);
     *ctx = saved;
 }
 

@@ -1,13 +1,11 @@
-// Hands N64Recomp's generated section tables to the runtime.
-#ifdef ISS_TRACE_BUILD
-#include "../recomp/RecompiledFuncsTrace/recomp_overlays.inl"
-#else
-#include "../recomp/RecompiledFuncs/recomp_overlays.inl"
-#endif
+// Hands N64Recomp's generated section tables to the runtime. Compiled into each version's recompiled library
+// (with that version's output directory on the include path), so the function below ends up prefixed as
+// us_iss_register_overlays, ende_iss_register_overlays, ... (see CMakeLists.txt and src/iss_version.cpp).
+#include "recomp_overlays.inl"
 
 #include "librecomp/overlays.hpp"
 
-void iss_register_overlays() {
+extern "C" void iss_register_overlays() {
     recomp::overlays::overlay_section_table_data_t sections {
         .code_sections = section_table,
         .num_code_sections = ARRLEN(section_table),

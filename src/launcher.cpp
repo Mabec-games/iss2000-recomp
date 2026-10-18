@@ -1,5 +1,6 @@
 // Launcher window shown before the game starts: darkened logo background, ROM selection (file dialog via
-// xdg-desktop-portal, or drag & drop onto the window), Fullscreen / Widescreen options, Play and Quit.
+// xdg-desktop-portal, or drag & drop onto the window), version choice when ROMs of several versions are
+// stored, Fullscreen / Widescreen options, Play and Quit.
 // Rendering uses SDL's 2D renderer in its own window, which is destroyed before RT64 creates the game window.
 #include <array>
 #include <cstdio>
@@ -21,6 +22,7 @@
 #include "librecomp/game.hpp"
 
 #include "launcher.h"
+#include "iss_version.h"
 #include "generated/launcher_assets.h"
 
 namespace {
@@ -108,7 +110,13 @@ namespace {
             case recomp::RomValidationError::NotARom: return "That file is not an N64 ROM.";
             case recomp::RomValidationError::IncorrectRom: return "That is a different game. Select International Superstar Soccer 2000.";
             case recomp::RomValidationError::NotYet: return "That game is not supported.";
-            case recomp::RomValidationError::IncorrectVersion: return "Wrong version: the USA (Rev 1) ROM is required.";
+            case recomp::RomValidationError::IncorrectVersion: {
+                std::string text = "That version of the game is not supported. Supported:";
+                for (size_t i = 0; i < iss_num_versions; i++) {
+                    text += std::string(i == 0 ? " " : ", ") + iss_versions[i].name;
+                }
+                return text + ".";
+            }
             default: return "Could not use that ROM.";
         }
     }
@@ -149,6 +157,7 @@ iss::LauncherSettings iss::load_launcher_settings(const std::filesystem::path& d
     while (in >> key >> value) {
         if (key == "fullscreen") s.fullscreen = value == "1";
         else if (key == "widescreen") s.widescreen = value == "1";
+        else if (key == "version") s.version = value;
     }
     return s;
 }
@@ -157,12 +166,40 @@ void iss::save_launcher_settings(const std::filesystem::path& data_dir, const La
     std::ofstream out(data_dir / "launcher.ini");
     out << "fullscreen " << (s.fullscreen ? 1 : 0) << "\n";
     out << "widescreen " << (s.widescreen ? 1 : 0) << "\n";
+    if (!s.version.empty()) out << "version " << s.version << "\n";
 }
 
-bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path& data_dir, LauncherSettings& settings) {
+const IssVersion* iss::select_rom_any_version(const std::filesystem::path& path, recomp::RomValidationError& err) {
+    err = recomp::RomValidationError::IncorrectRom;
+    for (size_t i = 0; i < iss_num_versions; i++) {
+        recomp::RomValidationError e = recomp::select_rom(path, iss_versions[i].game_id);
+        if (e == recomp::RomValidationError::Good) {
+            err = e;
+            recomp::check_all_stored_roms();
+            return &iss_versions[i];
+        }
+        // Keep the most telling reason: "not a ROM" / "can't open" are the same for every version, and a
+        // version mismatch beats "different game".
+        if (e != recomp::RomValidationError::IncorrectRom) err = e;
+    }
+    return nullptr;
+}
+
+const IssVersion* iss::stored_version(const LauncherSettings& settings) {
+    const IssVersion* first = nullptr;
+    for (size_t i = 0; i < iss_num_versions; i++) {
+        const IssVersion& v = iss_versions[i];
+        if (!recomp::is_rom_valid(v.game_id)) continue;
+        if (settings.version == v.id) return &v;
+        if (first == nullptr) first = &v;
+    }
+    return first;
+}
+
+const IssVersion* iss::run_launcher(const std::filesystem::path& data_dir, LauncherSettings& settings) {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "Launcher: SDL init failed: %s\n", SDL_GetError());
-        return recomp::is_rom_valid(game_id);
+        return stored_version(settings);
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
@@ -182,22 +219,37 @@ bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path
     Font small = bake_font(renderer, 18);
 
     bool nfd_ok = NFD_Init() == NFD_OKAY;
-    bool rom_ok = recomp::is_rom_valid(game_id);
-    std::string status = rom_ok ? "ROM found. Press Play to start." : "Select your International Superstar Soccer 2000 (USA) ROM to begin.";
+    const IssVersion* version = stored_version(settings);
+    bool rom_ok = version != nullptr;
+    std::string status = rom_ok ? "ROM found. Press Play to start." : "Select your International Superstar Soccer 2000 ROM (USA Rev 1 or Europe) to begin.";
     bool status_error = false;
+    auto stored_count = [&]() {
+        int n = 0;
+        for (size_t i = 0; i < iss_num_versions; i++) n += recomp::is_rom_valid(iss_versions[i].game_id);
+        return n;
+    };
+    // Next version (after the current one) whose ROM is stored.
+    auto next_version = [&]() {
+        size_t cur = version - iss_versions;
+        for (size_t k = 1; k <= iss_num_versions; k++) {
+            const IssVersion& v = iss_versions[(cur + k) % iss_num_versions];
+            if (recomp::is_rom_valid(v.game_id)) return &v;
+        }
+        return version;
+    };
 
-    enum { BTN_ROM, BTN_PLAY, BTN_FULLSCREEN, BTN_WIDESCREEN, BTN_QUIT, BTN_COUNT };
+    enum { BTN_ROM, BTN_VERSION, BTN_PLAY, BTN_FULLSCREEN, BTN_WIDESCREEN, BTN_QUIT, BTN_COUNT };
     std::array<Button, BTN_COUNT> buttons;
     int focus = rom_ok ? BTN_PLAY : BTN_ROM;
     SDL_GameController* pad = nullptr;
 
     auto use_rom = [&](const std::filesystem::path& path) {
-        recomp::RomValidationError err = recomp::select_rom(path, game_id);
-        if (err == recomp::RomValidationError::Good) {
-            recomp::check_all_stored_roms();
-            rom_ok = recomp::is_rom_valid(game_id);
+        recomp::RomValidationError err;
+        if (const IssVersion* v = select_rom_any_version(path, err)) {
+            version = v;
+            rom_ok = true;
         }
-        status = rom_ok && err == recomp::RomValidationError::Good ? "ROM accepted. Press Play to start." : rom_error_text(err);
+        status = err == recomp::RomValidationError::Good ? std::string("ROM accepted: ") + version->name + ". Press Play to start." : rom_error_text(err);
         status_error = err != recomp::RomValidationError::Good;
         if (rom_ok) focus = BTN_PLAY;
     };
@@ -226,6 +278,7 @@ bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path
     auto activate = [&](int index) {
         switch (index) {
             case BTN_ROM: pick_rom(); break;
+            case BTN_VERSION: if (rom_ok) version = next_version(); break;
             case BTN_PLAY: if (rom_ok) { play = true; running = false; } break;
             case BTN_FULLSCREEN: settings.fullscreen = !settings.fullscreen; break;
             case BTN_WIDESCREEN: settings.widescreen = !settings.widescreen; break;
@@ -250,12 +303,14 @@ bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path
         float vw = out_w / scale, vh = out_h / scale;
 
         buttons[BTN_ROM].label = rom_ok ? "Change ROM..." : "Select ROM...";
+        buttons[BTN_VERSION].label = rom_ok ? version->short_name : "Version";
+        buttons[BTN_VERSION].enabled = rom_ok && stored_count() > 1;
         buttons[BTN_PLAY].label = "Play";
         buttons[BTN_PLAY].enabled = rom_ok;
         buttons[BTN_FULLSCREEN].label = std::string("Fullscreen: ") + (settings.fullscreen ? "On" : "Off");
         buttons[BTN_WIDESCREEN].label = std::string("Widescreen: ") + (settings.widescreen ? "On" : "Off");
         buttons[BTN_QUIT].label = "Quit";
-        const float bw = 210, bh = 56, gap = 18;
+        const float bw = 190, bh = 56, gap = 14;
         float total = BTN_COUNT * bw + (BTN_COUNT - 1) * gap;
         for (int i = 0; i < BTN_COUNT; i++) {
             buttons[i].rect = { vw / 2 - total / 2 + i * (bw + gap), vh - 150, bw, bh };
@@ -317,7 +372,9 @@ bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path
         fill_rect(renderer, { 0, vh - 230, vw, 230 }, { 0, 0, 0, 170 });
 
         draw_text_centered(renderer, big, "Mabecs International Superstar Soccer 2000", vw / 2, vh - 222, { 255, 255, 255, 255 });
-        draw_text_centered(renderer, small, "Widescreen build  -  native PC recompilation of the N64 USA (Rev 1) version", vw / 2, vh - 172, { 255, 200, 90, 255 });
+        std::string subtitle = "Widescreen build  -  native PC recompilation of the N64 version";
+        if (rom_ok) subtitle += std::string(": ") + version->name;
+        draw_text_centered(renderer, small, subtitle, vw / 2, vh - 172, { 255, 200, 90, 255 });
 
         for (int i = 0; i < BTN_COUNT; i++) {
             const Button& b = buttons[i];
@@ -343,6 +400,7 @@ bool iss::run_launcher(const std::u8string& game_id, const std::filesystem::path
     if (logo != nullptr) SDL_DestroyTexture(logo);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    if (play) settings.version = version->id;
     save_launcher_settings(data_dir, settings);
-    return play;
+    return play ? version : nullptr;
 }

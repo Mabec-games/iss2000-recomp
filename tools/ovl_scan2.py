@@ -1,10 +1,13 @@
 # Scan main + all known overlays for calls to ROM read / chunk copy / bzero with constant args.
-import sys, struct, rabbitizer
+import os, sys, struct, rabbitizer
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import versions
 rom = open(sys.argv[1], 'rb').read()
-segs = [(0x1000, 0x80000400, 0x68DD0)]
+V = versions.detect(rom)
+segs = [(versions.MAIN_ROM, versions.MAIN_VRAM, V['text_end'] - versions.MAIN_VRAM)]
 for l in open(sys.argv[2]):
     r, v, s, b = (int(x, 16) for x in l.split()); segs.append((r, v, s))
-TGT = {0x80003964: 'READ ', 0x8005C5A0: 'BZERO', 0x8005568C: 'CHUNK', 0x80053150: 'FILE '}
+TGT = {V['read']: 'READ ', V['bzero']: 'BZERO', V['chunk']: 'CHUNK', V['file']: 'FILE '}
 for (romoff, base, size) in segs:
     W = lambda va: struct.unpack('>I', rom[va - base + romoff: va - base + romoff + 4])[0]
     for va in range(base, base + size, 4):

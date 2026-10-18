@@ -17,6 +17,8 @@ void iss_sky_stretch_begin(uint8_t* rdram, recomp_context* ctx);
 void iss_sky_stretch_end(uint8_t* rdram, recomp_context* ctx);
 void iss_widen_cull_frustum(uint8_t* rdram, recomp_context* ctx);
 void iss_widen_cull_far_plane(uint8_t* rdram, recomp_context* ctx);
+void iss_set_tv_type_pal(uint8_t* rdram, recomp_context* ctx);
+void iss_pal_vi_mode(uint8_t* rdram, recomp_context* ctx);
 
 // Horizontal widening factor for the game's view-frustum culling (window aspect / 4:3, >= 1).
 float iss_cull_widen_factor(void);

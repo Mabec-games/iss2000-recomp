@@ -13,6 +13,7 @@
 #include <filesystem>
 
 #include "trace.h"
+#include "iss_version.h"
 
 namespace {
     std::mutex trace_mutex;
@@ -65,7 +66,7 @@ extern "C" void iss_trace_gfx(const char* name, const uint8_t* rdram) {
         lines = 0;
         active = true;
     }
-    uint32_t addr = 0x0A09B0;
+    uint32_t addr = iss_version().gfx_pointer & 0x7FFFFF;
     uint32_t ptr = (uint32_t)rdram[addr ^ 3] << 24 | (uint32_t)rdram[(addr + 1) ^ 3] << 16 | (uint32_t)rdram[(addr + 2) ^ 3] << 8 | rdram[(addr + 3) ^ 3];
     fprintf(out, "%s %08X\n", name, ptr);
     if (++lines >= 300000) {

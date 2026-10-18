@@ -3,10 +3,13 @@
 # Function discovery: linear sweep per section. A function ends at `jr $ra` (+ delay slot) once no
 # earlier branch in the function targets beyond it. Seeds: every jal target from every segment.
 # Text end: the sweep stops when the next candidate does not decode cleanly up to a `jr $ra`.
-import sys, struct, rabbitizer
+import os, sys, struct, rabbitizer
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import versions
 
 ROM = open(sys.argv[1], 'rb').read()
+V = versions.detect(ROM)
 OVL_TSV, OUT = sys.argv[2], sys.argv[3]
 NAMES = {}
 if len(sys.argv) > 4:
@@ -14,7 +17,7 @@ if len(sys.argv) > 4:
         p = l.split('#')[0].split()
         if len(p) == 2: NAMES[int(p[0], 16)] = p[1]
 
-MAIN = ('main', 0x1000, 0x80000400, 0xA0200)
+MAIN = ('main', versions.MAIN_ROM, versions.MAIN_VRAM, V['bss'] - versions.MAIN_VRAM)
 segs = [MAIN]
 for l in open(OVL_TSV):
     r, v, s, b = (int(x, 16) for x in l.split())
@@ -95,13 +98,19 @@ def sweep_function(ws, base, start_idx, limit_idx):
             return None  # this compiler never emits traps; it's data
         if n == 'j':
             jt = (va & 0xF0000000) | (ins.getInstrIndexAsVram() & 0x0FFFFFFF)
-            if not (base <= jt < base + len(ws) * 4 or 0x80000400 <= jt < 0x80069180):
+            if not (base <= jt < base + len(ws) * 4 or versions.MAIN_VRAM <= jt < V['text_end']):
                 return None
         if n == 'lui':
             consts[ins.rt.name] = (ins.getProcessedImmediate() << 16) & 0xFFFFFFFF
         elif n in ('addiu', 'ori') and consts.get(ins.rs.name) is not None and ins.rt.name != 'zero':
             imm = ins.getProcessedImmediate()
             consts[ins.rt.name] = (consts[ins.rs.name] + imm) & 0xFFFFFFFF if n == 'addiu' else consts[ins.rs.name] | (imm & 0xFFFF)
+        elif n not in ('lui', 'addiu', 'ori', 'addu'):
+            # any other write makes the register's constant stale (e.g. lui v0 / lhu v0 before a jump table);
+            # addu keeps it so `addu at, at, idx` still sees the table base in `at`
+            for reg, writes in (('rd', ins.modifiesRd()), ('rt', ins.modifiesRt())):
+                if writes:
+                    consts.pop(getattr(ins, reg).name, None)
         if n == 'jr' and ins.rs.name != 'ra':
             for t in jump_table_targets(ws, base, start_idx, i, consts):
                 max_target = max(max_target, t)
@@ -119,7 +128,7 @@ def sweep_function(ws, base, start_idx, limit_idx):
     return None
 
 # Known hard text ends (data that happens to decode as CPU code, e.g. RSP microcode)
-TEXT_END_OVERRIDE = {'main': 0x80069180}
+TEXT_END_OVERRIDE = {'main': V['text_end']}
 
 def find_functions(seg, seeds):
     name, r, base, size = seg

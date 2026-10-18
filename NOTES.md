@@ -1,4 +1,6 @@
-# ISS 2000 (USA Rev 1) static recomp — research notes
+# ISS 2000 static recomp (USA Rev 1 + Europe En,De / Fr,It) — research notes
+
+European versions: see "European versions" below. The sections before it describe the US version.
 
 ROM: `International Superstar Soccer 2000 (USA) (En,Es) (Rev 1).z64` (symlinked as `baserom.z64`)
 SHA1 47a993fe1316dfd9e208603370d3dddae05f1d1b · CIC-6102 · libultra 2.0I · code NISE
@@ -124,6 +126,55 @@ SHA1 47a993fe1316dfd9e208603370d3dddae05f1d1b · CIC-6102 · libultra 2.0I · co
 - Release steps: build-deb12 (tools/debian12.sh cmake --build build-deb12) -> tools/make_appimage.sh ->
   git commit/push -> gh release create vX dist/Mabecs_ISS2000_Widescreen-x86_64.AppImage --notes-file ...
 - make_appimage.sh writes to a temp name and renames, so it works while the old AppImage is running.
+
+## European versions (2026-10-18)
+One executable supports USA Rev 1 (`us`), Europe En,De (`ende`, game code NISX, .n64 byte order) and Europe Fr,It
+(`frit`, NISY). The PAL builds are separate compiles: every address moved (BSS 0x8009DD20 / 0x8009DE00, entry
+jumps to 0x80000814) and the two PAL ROMs also differ by 0x20+ from each other. ~95% of US main functions match
+PAL with relocations masked; En,De vs Fr,It differ in only 4 main functions. aspMain is identical (shared).
+- Pipeline per version (US commands unchanged): tools/versions.py holds the per-version constants (ROM read /
+  bzero / chunk / file loaders, text end, BSS), picked by the ROM header game code, so the tools take any ROM:
+      .venv/bin/python -I tools/to_z64.py "...(En,De).n64" baserom.eu.ende.z64     # Fr,It: symlink baserom.eu.frit.z64
+      .venv/bin/python -I tools/ovl_closure.py baserom.eu.ende.z64 analysis/ende/overlays.tsv   # start from empty tsv
+      .venv/bin/python -I tools/gen_syms.py baserom.eu.ende.z64 analysis/ende/overlays.tsv \
+          recomp/iss2000.eu.ende.syms.toml recomp/libultra_names.eu.ende.txt
+      ext/N64Recomp/build/N64Recomp recomp/iss2000.eu.ende.toml        # -> recomp/RecompiledFuncs_ende
+      .venv/bin/python -I tools/gen_sections_header.py recomp/iss2000.eu.ende.syms.toml src/generated/iss_sections_ende.h ende
+  Re-run cmake configure after regenerating a RecompiledFuncs_* dir (sources are globbed).
+- libultra names were mapped by function matching (normalised instruction compare, ambiguous hits resolved by the
+  neighbours' offset). PAL also calls osViSetXScale (En,De 0x8005F080), which US doesn't: unnamed, it ran as game
+  code on VI state the runtime never sets up and crashed on boot.
+- gen_syms.py fix: register constants are dropped on any other write (a stale `lui v0` overrode the jump-table
+  base in `addu at, at, v0`, splitting func_8021347C_ovl_523120 in En,De). US output unchanged.
+- One binary: each version's generated code is a static lib whose defined globals get a prefix after archiving
+  (tools/prefix_syms.py via nm/objcopy: us_func_80000400, ende_recomp_entrypoint, ...). src/register_overlays.cpp
+  is compiled into each lib (-> <id>_iss_register_overlays). src/iss_version.cpp has the per-version table (ROM
+  hash, game id, sections, pak suffix, hook RAM addresses); hooks read iss_version(). All three games are
+  registered with librecomp; only the chosen version's overlays are registered, before recomp::start.
+- Hook addresses per version: see the [[patches.hook]] comments in recomp/iss2000.eu.*.toml (US name in brackets).
+  Hooked function equivalents: frame handler US func_80000B28 = PAL func_80002A10 (grew by a display-list
+  overflow check, no speed compensation), sky caller US func_80000D90 = PAL func_80000C30.
+- PAL-only hooks: recomp_entrypoint sets osTvType = PAL (librecomp writes NTSC before the entrypoint);
+  func_8000164C (game patches libultra's PAL LAN1 mode for a PAL TV: vStart 0x0043024C, field origin 0x519,
+  osViSetXScale 0.96 / osViSetYScale 0.88) is replaced by writing NTSC LAN1 timings into that mode. With the PAL
+  window RT64 drew the picture squashed, and the odd origin didn't match its framebuffer -> garbled raw-RDRAM output.
+- 50 Hz: patches/N64ModernRuntime-vi-rate.patch (REQUIRED to build; git apply in ext/N64ModernRuntime) adds ultramodern::set_vi_rate/get_vi_rate (VI thread and audio
+  use it); the host sets 50 for PAL. Measured: PAL match clock runs in real time at 50 Hz, and at 60 Hz the game's
+  audio code (882 samples per frame) overfills the queue and computes a negative buffer length -> crash. So PAL
+  can't run at 60 Hz; queue_samples now drops such bogus lengths. Debug: ISS_VI_RATE=<hz>, ISS_TV_NTSC=1.
+- Controller Pak files per version: controllerpak_pN.mpk (US, unchanged), controllerpak_pN_ende.mpk, _frit.mpk.
+- Launcher: a ROM is checked against every version (iss::select_rom_any_version); a version button cycles between
+  stored versions; the choice is saved as `version <id>` in launcher.ini. `--no-launcher` uses that (or the first
+  stored one); a ROM path argument selects its version.
+- Verified headless for all three: boot, intro, title, Controller Pak note creation/saving, menus (French text on
+  Fr,It), language option, a match in widescreen at 25 fps, audio steady (0-1 underruns per few minutes).
+
+## Headless testing (no windows on the desktop)
+`gamescope --backend headless -W 1280 -H 720 -- <cmd>` runs the game off-screen (NVIDIA works);
+`gamescopectl screenshot <file>` inside the session captures frames. Use ISS_DATA_DIR=<scratch dir> so test runs
+don't touch the real ROM store / paks, and ISS_INPUT_FILE to press buttons. A driver script (start game, timed
+`hold <buttons>` / `shot <name>` steps) worked well; title screen START is around 40 s after boot.
+gdb: ptrace_scope=1 blocks attaching, so run the game under gdb inside gamescope (pkill -INT to break in).
 
 ## Possible next steps
 - Windows build: host changes are small (HWND + thread id window handle, %APPDATA% data dir, nfd native dialog,

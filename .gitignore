@@ -4,6 +4,7 @@
 *.v64
 baserom.z64
 recomp/RecompiledFuncs/
+recomp/RecompiledFuncs_*/
 recomp/RecompiledFuncsTrace/
 recomp/rsp/
 analysis/
