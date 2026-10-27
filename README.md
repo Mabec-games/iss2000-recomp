@@ -6,8 +6,8 @@
 the full 16:9 (or wider) view at your screen's resolution. Players and the ball stay visible all the way to the edges
 of the screen, and the stadium sky fills the whole width instead of leaving black bars.
 
-<p align="center"><img src="docs/screenshot-widescreen.jpg" alt="Widescreen match: Nigeria vs Germany" width="100%"><br>
-<em>A match in native 16:9 widescreen at 2560x1440, with the original HUD.</em></p>
+<p align="center"><img src="docs/screenshot-widescreen.jpg" alt="Widescreen match with full-detail players: Japan vs Brazil" width="100%"><br>
+<em>A match in native 16:9 widescreen at 2560x1440 with full-detail players (v1.3), with the original HUD.</em></p>
 
 Native Linux and Windows port of **International Superstar Soccer 2000** (Nintendo 64: USA Rev 1 and both European versions) made by static
 recompilation with [N64Recomp](https://github.com/N64Recomp/N64Recomp), running on
