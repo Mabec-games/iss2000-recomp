@@ -9,6 +9,7 @@
 // The hooks below scale just those two by the window's aspect relative to 4:3. The projection and
 // the vertical extents (derived from registers, not from these globals) are left untouched.
 // Addresses and function names in this file are the US ones; the other versions' are in src/iss_version.cpp.
+#include <algorithm>
 #include <cstdlib>
 #include <chrono>
 #include <cstdio>
@@ -60,6 +61,29 @@ extern "C" void iss_resolution_option(uint8_t* rdram, recomp_context* ctx) {
     static const bool allow_hires = std::getenv("ISS_ALLOW_HIRES") != nullptr;
     if (!allow_hires) {
         ctx->r4 = 0;
+    }
+}
+
+// Player level of detail: the game draws distant players with simpler models (levels 2-6 by distance in a
+// match, 0-1 only in close-ups; thresholds at 0x8007DC14). Every model swap goes through func_8002E504
+// (player, level), so the level is overridden there: 0 (full detail) when the launcher's Detail option is Full.
+// Debug: ISS_PLAYER_LOD=<0-6> forces that level, ISS_PLAYER_LOD=game keeps the original behaviour.
+namespace {
+    bool full_player_detail = true;
+}
+
+extern "C" void iss_set_full_player_detail(int full) {
+    full_player_detail = full != 0;
+}
+
+extern "C" void iss_player_lod(uint8_t* rdram, recomp_context* ctx) {
+    static const char* env = std::getenv("ISS_PLAYER_LOD");
+    int level = full_player_detail ? 0 : -1;
+    if (env != nullptr) {
+        level = std::strcmp(env, "game") == 0 ? -1 : std::clamp(std::atoi(env), 0, 6);
+    }
+    if (level >= 0) {
+        ctx->r5 = level;
     }
 }
 
@@ -164,15 +188,17 @@ extern "C" void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx) {
     *ctx = saved;
 }
 
-// Debug: ISS_MEMDUMP_AT=<seconds>:<file> writes main RAM 0x80000000-0x801B0000 (as stored) to <file> once.
+// Debug: ISS_MEMDUMP_AT=<seconds>:<file>[:<count>:<interval>] writes all 8 MB of RDRAM (as stored) to <file>,
+// or <count> dumps <interval> seconds apart to <file>.0, <file>.1, ...
 extern "C" void iss_debug_memdump(uint8_t* rdram) {
     static const char* spec = std::getenv("ISS_MEMDUMP_AT");
-    static bool done = false;
+    static int done = 0;
     static auto start = std::chrono::steady_clock::now();
-    if (spec == nullptr || done) return;
-    float at = 0; char path[512] = {};
-    if (sscanf(spec, "%f:%511s", &at, path) < 2) return;
-    if (std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() < at) return;
-    done = true;
-    if (FILE* f = fopen(path, "wb")) { fwrite(rdram, 1, 0x1B0000, f); fclose(f); fprintf(stderr, "[debug] memory dumped\n"); }
+    if (spec == nullptr) return;
+    float at = 0, interval = 1; int count = 1; char path[512] = {};
+    if (sscanf(spec, "%f:%511[^:]:%d:%f", &at, path, &count, &interval) < 2 || done >= count) return;
+    if (std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count() < at + done * interval) return;
+    std::string name = count > 1 ? std::string(path) + "." + std::to_string(done) : std::string(path);
+    done++;
+    if (FILE* f = fopen(name.c_str(), "wb")) { fwrite(rdram, 1, 0x800000, f); fclose(f); fprintf(stderr, "[debug] memory dumped to %s\n", name.c_str()); }
 }

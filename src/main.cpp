@@ -34,6 +34,7 @@
 #include "iss_render.h"
 #include "launcher.h"
 #include "iss_version.h"
+#include "iss_hooks.h"
 
 extern RspUcodeFunc aspMain;
 extern "C" void iss_controller_pak_set_data_dir(const char* dir);
@@ -513,6 +514,7 @@ int main(int argc, char** argv) {
 
     reset_audio();
     apply_graphics_config(settings);
+    iss_set_full_player_detail(settings.full_detail);
 
     recomp::Configuration cfg{};
     cfg.argc = (int)args.size();

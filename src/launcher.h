@@ -17,6 +17,7 @@ namespace iss {
     struct LauncherSettings {
         bool fullscreen = false;
         bool widescreen = true;
+        bool full_detail = true;  // players always use their best model (no distance LOD)
         std::string version;  // id of the version last played (src/iss_version.cpp)
     };
 

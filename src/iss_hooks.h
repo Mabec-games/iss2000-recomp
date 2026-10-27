@@ -10,6 +10,9 @@ extern "C" {
 
 void iss_on_rom_read(uint8_t* rdram, recomp_context* ctx);
 void iss_resolution_option(uint8_t* rdram, recomp_context* ctx);
+void iss_player_lod(uint8_t* rdram, recomp_context* ctx);
+// Launcher option: nonzero = players always use their best model, 0 = the game's distance-based LOD.
+void iss_set_full_player_detail(int full);
 void iss_debug_switch_res(uint8_t* rdram, recomp_context* ctx);
 void iss_debug_sprite(uint8_t* rdram, recomp_context* ctx);
 void iss_debug_force_res(uint8_t* rdram, recomp_context* ctx);

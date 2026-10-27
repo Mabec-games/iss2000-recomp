@@ -97,3 +97,10 @@ text = "iss_set_tv_type_pal(rdram, ctx);"
 func = "func_8000164C"
 before_vram = 0x8000164C
 text = "iss_pal_vi_mode(rdram, ctx); return;"
+
+# Player LOD: func_8002EB84 [8002E504](player, level) switches a player's 19 body parts to the models of a detail level
+# (0 = best, 6 = worst; matches pick 2-6 by distance). The hook overrides the level (see src/iss_widescreen.cpp).
+[[patches.hook]]
+func = "func_8002EB84"
+before_vram = 0x8002EB84
+text = "iss_player_lod(rdram, ctx);"

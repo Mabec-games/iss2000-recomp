@@ -60,6 +60,14 @@ SHA1 47a993fe1316dfd9e208603370d3dddae05f1d1b · CIC-6102 · libultra 2.0I · co
   Hi-res flag: byte 0x8006C5F1 -> game state (*0x800A0914)+0x12, applied in func_80001E04 via a 25-frame
   countdown at 0x8006C5F0 run by func_80000B28.
 
+- Player LOD (2026-10-27): func_8002E504(player, level) [ende 8002EB64, frit 8002EB84] sets a player's 19 body-part
+  display lists for detail level 0 (best) .. 6 (levels 3-6 drop parts; head from per-player table 0x800B9590).
+  func_8002FA70 picks the level each frame via func_8002E3F0(depth at obj+0x20): linear between near 100 / far 750
+  (0x8007DC18/1C), from a minimum 0x8007DC14 (set by func_80030E58: 2 in matches, 0 in close-ups) up to 6.
+  Hook at func_8002E504 entry forces level 0 (iss_player_lod) when the launcher's "Detail: Full" option is on
+  (launcher.ini full_detail, default 1; "Detail: N64" = original). Debug override: ISS_PLAYER_LOD=<0-6> or =game.
+  Level-0 data is resident in matches (close-ups use it); verified in the attract demo, no missing parts.
+
 ## Host fixes (src/main.cpp)
 - Audio: get_frames_remaining reports 2 VIs less than queued (ISS_AUDIO_CUSHION overrides). Reporting the exact
   level let the output run dry 7-8x/s = crackles. Game sample rate is 44100.
@@ -87,7 +95,8 @@ SHA1 47a993fe1316dfd9e208603370d3dddae05f1d1b · CIC-6102 · libultra 2.0I · co
 - ISS_INPUT_FILE=path: controller 1 reads held buttons from a text file ("A START UP", "STICK x y").
   Menus need ~0.3 s holds (drive/hold.sh pattern); the save remembers the last menu position.
 - ISS_FORCE_RES=0|1: force mode at func_80001E04.   ISS_SWITCH_RES_AT=<s>:<v>: call func_80001D1C(v) at <s>.
-- ISS_MEMDUMP_AT=<s>:<file>: dump RAM 0x80000000-0x801B0000.   ISS_DL_DELAY_MS / ISS_BUFFERING / ISS_PRESENT: RT64 tests.
+- ISS_MEMDUMP_AT=<s>:<file>[:<count>:<interval>]: dump all 8 MB RDRAM (several dumps -> <file>.0, .1, ...).
+  Object draw lists: heads at 0x800CED88[i], node = {obj, next}; obj+0x24 DL, +0x28 flags.   ISS_DL_DELAY_MS / ISS_BUFFERING / ISS_PRESENT: RT64 tests.
 - ISS_DL_DUMP=<file>: touch <file> to dump the next frame's 2D commands (fills/texrects/TIMG addrs) to <file>.txt.
 - ISS_SPRITE_LOG=<file>: touch <file> to log 2D sprite objects passed to func_800414C0.
 - Trace build: N64Recomp recomp/iss2000.trace.toml -> recomp/RecompiledFuncsTrace, then
@@ -163,6 +172,7 @@ PAL with relocations masked; En,De vs Fr,It differ in only 4 main functions. asp
   audio code (882 samples per frame) overfills the queue and computes a negative buffer length -> crash. So PAL
   can't run at 60 Hz; queue_samples now drops such bogus lengths. Debug: ISS_VI_RATE=<hz>, ISS_TV_NTSC=1.
 - Controller Pak files per version: controllerpak_pN.mpk (US, unchanged), controllerpak_pN_ende.mpk, _frit.mpk.
+- Launcher: Detail Full/N64 button (player LOD, v1.3); buttons are sized to their labels.
 - Launcher: a ROM is checked against every version (iss::select_rom_any_version); a version button cycles between
   stored versions; the choice is saved as `version <id>` in launcher.ini. `--no-launcher` uses that (or the first
   stored one); a ROM path argument selects its version.

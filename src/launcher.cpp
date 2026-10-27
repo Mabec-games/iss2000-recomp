@@ -1,7 +1,8 @@
 // Launcher window shown before the game starts: darkened logo background, ROM selection (file dialog via
 // xdg-desktop-portal, or drag & drop onto the window), version choice when ROMs of several versions are
-// stored, Fullscreen / Widescreen options, Play and Quit.
+// stored, Fullscreen / Widescreen / player Detail options, Play and Quit.
 // Rendering uses SDL's 2D renderer in its own window, which is destroyed before RT64 creates the game window.
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <fstream>
@@ -157,6 +158,7 @@ iss::LauncherSettings iss::load_launcher_settings(const std::filesystem::path& d
     while (in >> key >> value) {
         if (key == "fullscreen") s.fullscreen = value == "1";
         else if (key == "widescreen") s.widescreen = value == "1";
+        else if (key == "full_detail") s.full_detail = value == "1";
         else if (key == "version") s.version = value;
     }
     return s;
@@ -166,6 +168,7 @@ void iss::save_launcher_settings(const std::filesystem::path& data_dir, const La
     std::ofstream out(data_dir / "launcher.ini");
     out << "fullscreen " << (s.fullscreen ? 1 : 0) << "\n";
     out << "widescreen " << (s.widescreen ? 1 : 0) << "\n";
+    out << "full_detail " << (s.full_detail ? 1 : 0) << "\n";
     if (!s.version.empty()) out << "version " << s.version << "\n";
 }
 
@@ -238,7 +241,7 @@ const IssVersion* iss::run_launcher(const std::filesystem::path& data_dir, Launc
         return version;
     };
 
-    enum { BTN_ROM, BTN_VERSION, BTN_PLAY, BTN_FULLSCREEN, BTN_WIDESCREEN, BTN_QUIT, BTN_COUNT };
+    enum { BTN_ROM, BTN_VERSION, BTN_PLAY, BTN_FULLSCREEN, BTN_WIDESCREEN, BTN_DETAIL, BTN_QUIT, BTN_COUNT };
     std::array<Button, BTN_COUNT> buttons;
     int focus = rom_ok ? BTN_PLAY : BTN_ROM;
     SDL_GameController* pad = nullptr;
@@ -282,6 +285,7 @@ const IssVersion* iss::run_launcher(const std::filesystem::path& data_dir, Launc
             case BTN_PLAY: if (rom_ok) { play = true; running = false; } break;
             case BTN_FULLSCREEN: settings.fullscreen = !settings.fullscreen; break;
             case BTN_WIDESCREEN: settings.widescreen = !settings.widescreen; break;
+            case BTN_DETAIL: settings.full_detail = !settings.full_detail; break;
             case BTN_QUIT: running = false; break;
         }
     };
@@ -309,11 +313,20 @@ const IssVersion* iss::run_launcher(const std::filesystem::path& data_dir, Launc
         buttons[BTN_PLAY].enabled = rom_ok;
         buttons[BTN_FULLSCREEN].label = std::string("Fullscreen: ") + (settings.fullscreen ? "On" : "Off");
         buttons[BTN_WIDESCREEN].label = std::string("Widescreen: ") + (settings.widescreen ? "On" : "Off");
+        buttons[BTN_DETAIL].label = std::string("Detail: ") + (settings.full_detail ? "Full" : "N64");
         buttons[BTN_QUIT].label = "Quit";
-        const float bw = 190, bh = 56, gap = 14;
-        float total = BTN_COUNT * bw + (BTN_COUNT - 1) * gap;
+        // Each button is as wide as its label needs (at least 120), centred as a row.
+        const float bh = 56, gap = 12;
+        std::array<float, BTN_COUNT> widths;
+        float total = (BTN_COUNT - 1) * gap;
         for (int i = 0; i < BTN_COUNT; i++) {
-            buttons[i].rect = { vw / 2 - total / 2 + i * (bw + gap), vh - 150, bw, bh };
+            widths[i] = std::max(120.0f, text_width(normal, buttons[i].label) + 32);
+            total += widths[i];
+        }
+        float x = vw / 2 - total / 2;
+        for (int i = 0; i < BTN_COUNT; i++) {
+            buttons[i].rect = { x, vh - 150, widths[i], bh };
+            x += widths[i] + gap;
         }
 
         SDL_Event e;

@@ -26,6 +26,18 @@ the launcher detects which one you give it:
 `.z64`, `.n64` and `.v64` byte orders are all accepted. The European versions have their own languages (set under
 Option > Language) and a harder single-player game.
 
+## New in v1.3: full-detail players
+On the N64, players further from the camera were drawn with simpler, lower-polygon models (a level-of-detail
+filter that saved memory and rendering time): blocky bodies, no hands, flat heads. In a match even the nearest
+players never got the game's best model, which was kept for close-ups.
+v1.3 removes that filter: **every player always uses the best, most detailed model**, at any distance.
+- New launcher option **Detail: Full / N64**. Full (default) is the high-detail models; N64 restores the original
+  behaviour.
+- Works in all three versions (USA, Europe En,De and Fr,It). Only the models change; gameplay is the same.
+
+<p align="center"><img src="docs/screenshot-player-detail.jpg" alt="Distant players, original vs full detail" width="100%"><br>
+<em>Players far from the camera: the original low-detail models (left) and the full-detail models in v1.3 (right).</em></p>
+
 ## New in v1.2: European versions
 v1.2 adds support for both European (PAL) releases of the game, in the same AppImage as the USA version:
 - **Europe (En,De)**: English and German. **Europe (Fr,It)**: French and Italian (menus, messages and commentary).
@@ -42,10 +54,11 @@ v1.2 adds support for both European (PAL) releases of the game, in the same AppI
 ## Features
 - **Widescreen**: 16:9 and wider, with the game's culling widened (no player pop-in at the edges) and the stadium sky
   extended to the full width; HUD stays in its original layout
+- **Full-detail players** at any distance (no N64 level-of-detail models; launcher option)
 - Window-scaled resolution, 4x MSAA
 - Controller Pak saves (raw 32 KB `.mpk`, Project64-compatible), kept separately per version
 - Launcher: ROM selection (file picker or drag & drop), version choice when several ROMs are stored,
-  Fullscreen/Widescreen options
+  Fullscreen/Widescreen/Detail options
 - Gamepad and keyboard input
 
 ## Download
