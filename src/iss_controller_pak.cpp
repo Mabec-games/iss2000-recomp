@@ -8,6 +8,7 @@
 //     controllerpak_p1.mpk (USA), controllerpak_p1_ende.mpk (Europe En,De), ...
 // Port 1 has a pak by default; ISS_PAKS=0 disables it, ISS_PAKS=2 also inserts one in port 2, etc.
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,8 +35,13 @@ namespace {
     std::mutex pak_mutex;
     std::filesystem::path data_dir;
     std::array<Pak, 4> paks;
+    // Online play: the game reads the pak, so both peers need the same contents. They use a separate pak
+    // in port 1 only (controllerpak_online_p1*.mpk); it starts out identically formatted and both games
+    // write the same saves to it, so it stays identical as long as it is only used between the same peers.
+    std::atomic<bool> online_pak{ false };
 
     int inserted_pak_count() {
+        if (online_pak.load()) return 1;
         static const int count = [] {
             const char* v = std::getenv("ISS_PAKS");
             int n = v != nullptr ? std::atoi(v) : 1;
@@ -89,7 +95,8 @@ namespace {
         }
         Pak& pak = paks[channel];
         if (!pak.loaded) {
-            pak.path = data_dir / ("controllerpak_p" + std::to_string(channel + 1) + iss_version().pak_suffix + ".mpk");
+            pak.path = data_dir / ((online_pak.load() ? "controllerpak_online_p" : "controllerpak_p") +
+                                   std::to_string(channel + 1) + iss_version().pak_suffix + ".mpk");
             std::ifstream in(pak.path, std::ios::binary);
             if (in && in.read(reinterpret_cast<char*>(pak.data.data()), pak_size)) {
                 fprintf(stderr, "[pak] port %d: loaded %s\n", channel + 1, pak.path.string().c_str());
@@ -101,6 +108,11 @@ namespace {
                 fprintf(stderr, "[pak] port %d: created formatted pak %s\n", channel + 1, pak.path.string().c_str());
             }
             pak.loaded = true;
+            if (online_pak.load()) {
+                uint32_t h = 2166136261u;
+                for (uint8_t b : pak.data) h = (h ^ b) * 16777619u;
+                fprintf(stderr, "[pak] online pak checksum %08X (must match on both machines)\n", h);
+            }
         }
         return &pak;
     }
@@ -120,6 +132,13 @@ namespace {
 extern "C" void iss_controller_pak_set_data_dir(const char* dir) {
     std::lock_guard lock{ pak_mutex };
     data_dir = std::filesystem::path(reinterpret_cast<const char8_t*>(dir));  // UTF-8
+}
+
+extern "C" void iss_controller_pak_set_online(bool online) {
+    std::lock_guard lock{ pak_mutex };
+    if (online_pak.exchange(online) != online) {
+        for (Pak& pak : paks) pak.loaded = false;  // reload from the other set of files
+    }
 }
 
 extern "C" bool iss_controller_pak_inserted(int channel) {

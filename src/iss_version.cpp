@@ -26,6 +26,7 @@ const IssVersion iss_versions[] = {
         .match_engine_rom = 0x32F090, .horizontal_tan = 0x800A0984, .far_half_width = 0x800AA104,
         .gfx_pointer = 0x800A09B0, .hires_option = 0x8006C5F1, .set_resolution = us_func_80001D1C,
         .pal_vi_mode = 0,
+        .rng_states = { 0x800A7878, 0x800A7AE8 },
     },
     {
         .id = "ende", .game_id = u8"iss2000.n64.eu.ende", .mod_game_id = "iss2000-eu-ende", .name = "Europe (English, German)",
@@ -38,6 +39,7 @@ const IssVersion iss_versions[] = {
         .match_engine_rom = 0x32AE00, .horizontal_tan = 0x8009E09C, .far_half_width = 0x800A7824,
         .gfx_pointer = 0x8009E0C8, .hires_option = 0x8006CE71, .set_resolution = ende_func_80001D44,
         .pal_vi_mode = 0x80098DC0,
+        .rng_states = { 0x800A4F98, 0x800A5208 },
     },
     {
         .id = "frit", .game_id = u8"iss2000.n64.eu.frit", .mod_game_id = "iss2000-eu-frit", .name = "Europe (French, Italian)",
@@ -50,6 +52,7 @@ const IssVersion iss_versions[] = {
         .match_engine_rom = 0x329FA0, .horizontal_tan = 0x8009E17C, .far_half_width = 0x800A7904,
         .gfx_pointer = 0x8009E1A8, .hires_option = 0x8006CE91, .set_resolution = frit_func_80001D44,
         .pal_vi_mode = 0x80098EA0,
+        .rng_states = { 0x800A5078, 0x800A52E8 },
     },
 };
 const size_t iss_num_versions = sizeof(iss_versions) / sizeof(iss_versions[0]);

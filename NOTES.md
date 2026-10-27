@@ -208,3 +208,13 @@ gdb: ptrace_scope=1 blocks attaching, so run the game under gdb inside gamescope
 
 ## Possible next steps
 - Rumble Pak option, controller remapping, texture-pack dump/load (ISS_DEV / ISS_TEXTURE_PACK idea).
+
+## Online 1 vs 1 (v1.4, 2026-10-27)
+- src/iss_netplay.cpp: Dolphin traversal (stun.dolphin-emu.org:6262) + LAN broadcast (UDP 9099), delayed-input
+  lockstep with 12-frame redundancy, VI lead limit. Details and history in online.md.
+- patches/N64ModernRuntime-netplay.patch (REQUIRED, after vi-rate): relative VI pacing while a vi_callback is set,
+  run-state reset in recomp::start (launcher -> game -> launcher).
+- Determinism: game osGetCount calls are renamed to iss_game_osGetCount_recomp (objcopy in CMakeLists.txt); online
+  it returns token + frame*1562500 + per-thread call*64 (RNG seeds: US func_80008F20 -> 0x800A7878,
+  func_80016448 -> 0x800A7AE8; IssVersion::rng_states). Online: pak port 1 = controllerpak_online_p1*.mpk,
+  fixed 21:9 cull, Full LOD, 6-VI audio cushion. Desync check hashes rng_states per input frame (ISS_NET_DEBUG=1).

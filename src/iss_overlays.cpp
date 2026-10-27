@@ -17,6 +17,7 @@
 
 #include "recomp.h"
 #include "librecomp/overlays.hpp"
+#include "iss_netplay.h"
 #include "iss_version.h"
 
 // True while the match engine overlay (US ROM 0x32F090, loaded at 0x803AC000) is resident, i.e. during a match.
@@ -69,6 +70,7 @@ namespace {
 }
 
 extern "C" void iss_on_rom_read(uint8_t* rdram, recomp_context* ctx) {
+    iss::net::set_rdram(rdram);
     uint32_t direction = (uint32_t)ctx->r5;
     int32_t ram = (int32_t)ctx->r6;
     uint32_t rom = (uint32_t)ctx->r7;

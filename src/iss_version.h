@@ -35,6 +35,7 @@ struct IssVersion {
     uint32_t hires_option;          // Resolution option byte, 1 = High (US 0x8006C5F1)
     IssRecompFunc* set_resolution;  // Options handler that sets it (US func_80001D1C), debug only
     uint32_t pal_vi_mode;           // PAL: libultra's PAL LAN1 OSViMode, given NTSC LAN1 timings (0 for US)
+    uint32_t rng_states[2];         // game RNG states seeded from osGetCount (US 0x800A7878, 0x800A7AE8); netplay desync check
 };
 
 extern const IssVersion iss_versions[];

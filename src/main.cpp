@@ -35,10 +35,12 @@
 #include "launcher.h"
 #include "iss_version.h"
 #include "iss_hooks.h"
+#include "iss_netplay.h"
 
 extern RspUcodeFunc aspMain;
 extern "C" void iss_controller_pak_set_data_dir(const char* dir);
 extern "C" bool iss_controller_pak_inserted(int channel);
+extern "C" void iss_controller_pak_set_online(bool online);
 
 namespace {
     SDL_Window* window = nullptr;
@@ -46,39 +48,58 @@ namespace {
     SDL_AudioStream* audio_stream = nullptr;
     uint32_t game_sample_rate = 32000;
     constexpr int output_sample_rate = 48000;
-    SDL_GameController* controller = nullptr;
+    std::array<SDL_GameController*, 2> controllers = { nullptr, nullptr };
 
     void toggle_fullscreen();
 
-    // Open the first connected game controller if none is open. Polled every frame because controllers that
-    // were already connected are announced (SDL_CONTROLLERDEVICEADDED) only once, and the launcher consumes it.
-    void ensure_controller() {
-        if (controller != nullptr) {
-            if (SDL_GameControllerGetAttached(controller)) return;
-            SDL_GameControllerClose(controller);
-            controller = nullptr;
+    // Open connected game controllers (supporting up to 2 for local and netplay).
+    void ensure_controllers() {
+        for (int p = 0; p < 2; p++) {
+            if (controllers[p] != nullptr) {
+                if (!SDL_GameControllerGetAttached(controllers[p])) {
+                    SDL_GameControllerClose(controllers[p]);
+                    controllers[p] = nullptr;
+                }
+            }
         }
-        static int last_count = -1;
         int count = SDL_NumJoysticks();
         for (int i = 0; i < count; i++) {
             if (SDL_IsGameController(i)) {
-                controller = SDL_GameControllerOpen(i);
-                if (controller != nullptr) {
-                    fprintf(stderr, "Controller: %s\n", SDL_GameControllerName(controller));
-                    return;
+                SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+                bool already = false;
+                for (int p = 0; p < 2; p++) {
+                    if (controllers[p] != nullptr && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[p])) == jid) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (already) continue;
+
+                if (controllers[0] == nullptr) {
+                    controllers[0] = SDL_GameControllerOpen(i);
+                    if (controllers[0] != nullptr) {
+                        fprintf(stderr, "Controller 1 (P1): %s\n", SDL_GameControllerName(controllers[0]));
+                    }
+                } else if (controllers[1] == nullptr) {
+                    controllers[1] = SDL_GameControllerOpen(i);
+                    if (controllers[1] != nullptr) {
+                        fprintf(stderr, "Controller 2 (P2): %s\n", SDL_GameControllerName(controllers[1]));
+                    }
                 }
             }
-            else if (count != last_count) {
-                fprintf(stderr, "Controller: joystick \"%s\" has no known button mapping\n", SDL_JoystickNameForIndex(i));
-            }
         }
-        last_count = count;
     }
 
     std::atomic<float> cull_widen_factor{ 1.0f };
 
     // Window aspect relative to 4:3 when widescreen expansion is on; read by the culling hooks.
     void update_cull_widen_factor() {
+        // The culling extents live in game memory, so online peers must use the same value whatever their
+        // window shape: a fixed 21:9 width.
+        if (iss::net::is_online()) {
+            cull_widen_factor = (21.0f / 9.0f) / (4.0f / 3.0f);
+            return;
+        }
         if (window == nullptr || ultramodern::renderer::get_graphics_config().ar_option != ultramodern::renderer::AspectRatio::Expand) {
             cull_widen_factor = 1.0f;
             return;
@@ -127,8 +148,12 @@ namespace {
     }
 
     void update_gfx(void*) {
+        if (iss::net::should_return_to_launcher()) {
+            ultramodern::quit();
+            return;
+        }
         update_cull_widen_factor();
-        ensure_controller();
+        ensure_controllers();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
@@ -144,9 +169,11 @@ namespace {
                     }
                     break;
                 case SDL_CONTROLLERDEVICEREMOVED:
-                    if (controller != nullptr && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)) == event.cdevice.which) {
-                        SDL_GameControllerClose(controller);
-                        controller = nullptr;
+                    for (int p = 0; p < 2; p++) {
+                        if (controllers[p] != nullptr && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controllers[p])) == event.cdevice.which) {
+                            SDL_GameControllerClose(controllers[p]);
+                            controllers[p] = nullptr;
+                        }
                     }
                     break;
             }
@@ -202,11 +229,16 @@ namespace {
 
     void reset_audio() {
         SDL_InitSubSystem(SDL_INIT_AUDIO);
+        if (audio_device != 0) {
+            SDL_PauseAudioDevice(audio_device, 1);
+            SDL_CloseAudioDevice(audio_device);
+            audio_device = 0;
+        }
         SDL_AudioSpec desired{};
         desired.freq = output_sample_rate;
         desired.format = AUDIO_F32;
         desired.channels = 2;
-        desired.samples = 0x100;
+        desired.samples = 1024;
         audio_device = SDL_OpenAudioDevice(nullptr, false, &desired, nullptr, 0);
         if (audio_device == 0) {
             fprintf(stderr, "SDL error opening audio device: %s\n", SDL_GetError());
@@ -214,6 +246,14 @@ namespace {
         }
         rebuild_audio_stream();
         SDL_PauseAudioDevice(audio_device, 0);
+    }
+
+    // VIs of audio kept queued beyond what the game is told. Online play keeps a deeper cushion: the game
+    // stalls whenever it waits for the peer's input, and a 2-VI cushion runs dry on any real network.
+    uint64_t audio_cushion_vis() {
+        static const char* env = std::getenv("ISS_AUDIO_CUSHION");
+        if (env != nullptr) return std::strtoull(env, nullptr, 10);
+        return iss::net::is_online() ? 6 : 2;
     }
 
     void queue_samples(int16_t* audio_data, size_t sample_count) {
@@ -239,7 +279,7 @@ namespace {
             static std::vector<uint8_t> out;
             out.resize(available);
             int got = SDL_AudioStreamGet(audio_stream, out.data(), available);
-            // Drop audio if more than 100ms is already queued so latency doesn't build up.
+            // Drop audio if more than 100ms (plus any extra cushion) is already queued so latency doesn't build up.
             static const bool audio_debug = std::getenv("ISS_AUDIO_DEBUG") != nullptr || std::getenv("ISS_FPS") != nullptr;
             uint32_t queued = SDL_GetQueuedAudioSize(audio_device);
             if (audio_debug) {
@@ -253,7 +293,10 @@ namespace {
                     last = SDL_GetTicks(); min_q = UINT32_MAX; max_q = 0; chunks = 0; empties = 0;
                 }
             }
-            if (got > 0 && queued < output_sample_rate * 2 * sizeof(float) / 10) {
+            // The limit grows with the cushion beyond the default 2 VIs.
+            uint64_t extra_vis = audio_cushion_vis() > 2 ? audio_cushion_vis() - 2 : 0;
+            uint64_t max_queued = output_sample_rate * 2 * sizeof(float) * (10 + extra_vis * 100 / ultramodern::get_vi_rate()) / 100;
+            if (got > 0 && queued < max_queued) {
                 SDL_QueueAudio(audio_device, out.data(), got);
             }
             else if (audio_debug) {
@@ -269,7 +312,7 @@ namespace {
         // The game tops its audio up to a small target based on this value. Report two VIs' worth less than is
         // really queued so it keeps a cushion; reporting the exact level left the output running dry several
         // times per second (audible crackles).
-        static const uint64_t cushion_vis = std::getenv("ISS_AUDIO_CUSHION") ? std::strtoull(std::getenv("ISS_AUDIO_CUSHION"), nullptr, 10) : 2;
+        uint64_t cushion_vis = audio_cushion_vis();
         uint64_t queued_bytes = SDL_GetQueuedAudioSize(audio_device);
         uint64_t queued_frames = queued_bytes / (2 * sizeof(float)) * game_sample_rate / output_sample_rate;
         uint64_t cushion = cushion_vis * game_sample_rate / ultramodern::get_vi_rate();
@@ -291,19 +334,12 @@ namespace {
         CONT_UP = 0x0800, CONT_DOWN = 0x0400, CONT_LEFT = 0x0200, CONT_RIGHT = 0x0100,
         CONT_L = 0x0020, CONT_R = 0x0010, CONT_E = 0x0008, CONT_D = 0x0004, CONT_C = 0x0002, CONT_F = 0x0001;
 
-    void poll_input() {}
-
-    // Debug input injection: ISS_INPUT_FILE=<path> makes controller 1 read held buttons from a text file,
-    // e.g. "A START UP" or "STICK -1 0". Used to drive the game from scripts while debugging.
+    // Debug input injection: ISS_INPUT_FILE=<path> makes controller 1 read held buttons from a text file.
     uint16_t injected_buttons(float* x, float* y) {
         static const char* path = std::getenv("ISS_INPUT_FILE");
-        if (path == nullptr) {
-            return 0;
-        }
+        if (path == nullptr) return 0;
         FILE* f = fopen(path, "r");
-        if (f == nullptr) {
-            return 0;
-        }
+        if (f == nullptr) return 0;
         struct { const char* name; uint16_t bit; } names[] = {
             { "A", CONT_A }, { "B", CONT_B }, { "Z", CONT_G }, { "START", CONT_START }, { "L", CONT_L }, { "R", CONT_R },
             { "UP", CONT_UP }, { "DOWN", CONT_DOWN }, { "LEFT", CONT_LEFT }, { "RIGHT", CONT_RIGHT },
@@ -324,62 +360,140 @@ namespace {
         return b;
     }
 
-    bool get_input(int controller_num, uint16_t* buttons, float* x, float* y) {
-        if (controller_num != 0) {
-            return false;
-        }
+    void read_local_controller(int player_num, uint16_t* buttons, float* x, float* y) {
         uint16_t b = 0;
         float ax = 0.0f, ay = 0.0f;
 
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
-        struct { SDL_Scancode key; uint16_t bit; } keymap[] = {
-            { SDL_SCANCODE_X, CONT_A }, { SDL_SCANCODE_C, CONT_B }, { SDL_SCANCODE_Z, CONT_G },
-            { SDL_SCANCODE_RETURN, CONT_START }, { SDL_SCANCODE_Q, CONT_L }, { SDL_SCANCODE_E, CONT_R },
-            { SDL_SCANCODE_I, CONT_E }, { SDL_SCANCODE_K, CONT_D }, { SDL_SCANCODE_J, CONT_C }, { SDL_SCANCODE_L, CONT_F },
-            { SDL_SCANCODE_T, CONT_UP }, { SDL_SCANCODE_G, CONT_DOWN }, { SDL_SCANCODE_F, CONT_LEFT }, { SDL_SCANCODE_H, CONT_RIGHT },
-        };
-        for (const auto& m : keymap) {
-            if (keys[m.key]) b |= m.bit;
-        }
-        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) ax -= 1.0f;
-        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) ax += 1.0f;
-        if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) ay += 1.0f;
-        if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) ay -= 1.0f;
 
-        if (controller != nullptr) {
-            auto btn = [](SDL_GameControllerButton sb) { return SDL_GameControllerGetButton(controller, sb) != 0; };
-            auto axis = [](SDL_GameControllerAxis sa) { return SDL_GameControllerGetAxis(controller, sa) / 32767.0f; };
-            if (btn(SDL_CONTROLLER_BUTTON_A)) b |= CONT_A;
-            if (btn(SDL_CONTROLLER_BUTTON_X)) b |= CONT_B;
-            if (btn(SDL_CONTROLLER_BUTTON_START)) b |= CONT_START;
-            if (btn(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) b |= CONT_G;
-            if (btn(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) b |= CONT_R;
-            if (btn(SDL_CONTROLLER_BUTTON_DPAD_UP)) b |= CONT_UP;
-            if (btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) b |= CONT_DOWN;
-            if (btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) b |= CONT_LEFT;
-            if (btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) b |= CONT_RIGHT;
-            if (btn(SDL_CONTROLLER_BUTTON_BACK)) b |= CONT_L;
-            if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f) b |= CONT_G;
-            if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f) b |= CONT_R;
-            float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
-            if (ry < -0.5f) b |= CONT_E;
-            if (ry > 0.5f) b |= CONT_D;
-            if (rx < -0.5f) b |= CONT_C;
-            if (rx > 0.5f) b |= CONT_F;
-            if (btn(SDL_CONTROLLER_BUTTON_Y)) b |= CONT_C;
-            if (btn(SDL_CONTROLLER_BUTTON_B)) b |= CONT_D;
-            float lx = axis(SDL_CONTROLLER_AXIS_LEFTX), ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);
-            if (lx * lx + ly * ly > 0.04f) { ax = lx; ay = ly; }
-        }
+        if (player_num == 0) {
+            // Player 1 Keyboard
+            struct { SDL_Scancode key; uint16_t bit; } keymap[] = {
+                { SDL_SCANCODE_X, CONT_A }, { SDL_SCANCODE_C, CONT_B }, { SDL_SCANCODE_Z, CONT_G },
+                { SDL_SCANCODE_RETURN, CONT_START }, { SDL_SCANCODE_Q, CONT_L }, { SDL_SCANCODE_E, CONT_R },
+                { SDL_SCANCODE_I, CONT_E }, { SDL_SCANCODE_K, CONT_D }, { SDL_SCANCODE_J, CONT_C }, { SDL_SCANCODE_L, CONT_F },
+                { SDL_SCANCODE_T, CONT_UP }, { SDL_SCANCODE_G, CONT_DOWN }, { SDL_SCANCODE_F, CONT_LEFT }, { SDL_SCANCODE_H, CONT_RIGHT },
+            };
+            for (const auto& m : keymap) {
+                if (keys[m.key]) b |= m.bit;
+            }
+            if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) ax -= 1.0f;
+            if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) ax += 1.0f;
+            if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) ay += 1.0f;
+            if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) ay -= 1.0f;
 
-        float ix = 0.0f, iy = 0.0f;
-        b |= injected_buttons(&ix, &iy);
-        if (ix != 0.0f || iy != 0.0f) { ax = ix; ay = iy; }
+            // Player 1 Gamepad
+            SDL_GameController* c = controllers[0];
+            if (c != nullptr) {
+                auto btn = [c](SDL_GameControllerButton sb) { return SDL_GameControllerGetButton(c, sb) != 0; };
+                auto axis = [c](SDL_GameControllerAxis sa) { return SDL_GameControllerGetAxis(c, sa) / 32767.0f; };
+                if (btn(SDL_CONTROLLER_BUTTON_A)) b |= CONT_A;
+                if (btn(SDL_CONTROLLER_BUTTON_X)) b |= CONT_B;
+                if (btn(SDL_CONTROLLER_BUTTON_START)) b |= CONT_START;
+                if (btn(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) b |= CONT_G;
+                if (btn(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) b |= CONT_R;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_UP)) b |= CONT_UP;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) b |= CONT_DOWN;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) b |= CONT_LEFT;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) b |= CONT_RIGHT;
+                if (btn(SDL_CONTROLLER_BUTTON_BACK)) b |= CONT_L;
+                if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f) b |= CONT_G;
+                if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f) b |= CONT_R;
+                float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+                if (ry < -0.5f) b |= CONT_E;
+                if (ry > 0.5f) b |= CONT_D;
+                if (rx < -0.5f) b |= CONT_C;
+                if (rx > 0.5f) b |= CONT_F;
+                if (btn(SDL_CONTROLLER_BUTTON_Y)) b |= CONT_C;
+                if (btn(SDL_CONTROLLER_BUTTON_B)) b |= CONT_D;
+                float lx = axis(SDL_CONTROLLER_AXIS_LEFTX), ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);
+                if (lx * lx + ly * ly > 0.04f) { ax = lx; ay = ly; }
+            }
+
+            float ix = 0.0f, iy = 0.0f;
+            b |= injected_buttons(&ix, &iy);
+            if (ix != 0.0f || iy != 0.0f) { ax = ix; ay = iy; }
+        }
+        else if (player_num == 1) {
+            // Player 2 Gamepad (controllers[1] if present, otherwise controllers[0] if P1 uses keyboard)
+            SDL_GameController* c = (controllers[1] != nullptr) ? controllers[1] : controllers[0];
+            if (c != nullptr) {
+                auto btn = [c](SDL_GameControllerButton sb) { return SDL_GameControllerGetButton(c, sb) != 0; };
+                auto axis = [c](SDL_GameControllerAxis sa) { return SDL_GameControllerGetAxis(c, sa) / 32767.0f; };
+                if (btn(SDL_CONTROLLER_BUTTON_A)) b |= CONT_A;
+                if (btn(SDL_CONTROLLER_BUTTON_X)) b |= CONT_B;
+                if (btn(SDL_CONTROLLER_BUTTON_START)) b |= CONT_START;
+                if (btn(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) b |= CONT_G;
+                if (btn(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) b |= CONT_R;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_UP)) b |= CONT_UP;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) b |= CONT_DOWN;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) b |= CONT_LEFT;
+                if (btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) b |= CONT_RIGHT;
+                if (btn(SDL_CONTROLLER_BUTTON_BACK)) b |= CONT_L;
+                if (axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 0.5f) b |= CONT_G;
+                if (axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 0.5f) b |= CONT_R;
+                float rx = axis(SDL_CONTROLLER_AXIS_RIGHTX), ry = axis(SDL_CONTROLLER_AXIS_RIGHTY);
+                if (ry < -0.5f) b |= CONT_E;
+                if (ry > 0.5f) b |= CONT_D;
+                if (rx < -0.5f) b |= CONT_C;
+                if (rx > 0.5f) b |= CONT_F;
+                if (btn(SDL_CONTROLLER_BUTTON_Y)) b |= CONT_C;
+                if (btn(SDL_CONTROLLER_BUTTON_B)) b |= CONT_D;
+                float lx = axis(SDL_CONTROLLER_AXIS_LEFTX), ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);
+                if (lx * lx + ly * ly > 0.04f) { ax = lx; ay = ly; }
+            }
+
+            // Keyboard secondary controls for P2 (Numpad)
+            if (keys[SDL_SCANCODE_KP_4]) ax -= 1.0f;
+            if (keys[SDL_SCANCODE_KP_6]) ax += 1.0f;
+            if (keys[SDL_SCANCODE_KP_8]) ay += 1.0f;
+            if (keys[SDL_SCANCODE_KP_2] || keys[SDL_SCANCODE_KP_5]) ay -= 1.0f;
+            if (keys[SDL_SCANCODE_KP_1]) b |= CONT_A;
+            if (keys[SDL_SCANCODE_KP_0]) b |= CONT_B;
+            if (keys[SDL_SCANCODE_KP_ENTER]) b |= CONT_START;
+            if (keys[SDL_SCANCODE_KP_7]) b |= CONT_G;
+            if (keys[SDL_SCANCODE_KP_9]) b |= CONT_R;
+        }
 
         *buttons = b;
         *x = ax;
         *y = ay;
-        return true;
+    }
+
+    void poll_input() {
+        if (iss::net::is_active()) {
+            uint16_t b = 0;
+            float ax = 0.0f, ay = 0.0f;
+            read_local_controller(0, &b, &ax, &ay);
+            iss::net::NetInputState local_in;
+            local_in.buttons = b;
+            local_in.stick_x = (int8_t)std::clamp<int>((int)(ax * 127.0f), -128, 127);
+            local_in.stick_y = (int8_t)std::clamp<int>((int)(ay * 127.0f), -128, 127);
+            iss::net::poll_and_sync(local_in);
+            if (iss::net::should_return_to_launcher()) ultramodern::quit();
+        }
+    }
+
+    void net_vi_tick() {
+        iss::net::on_vi_tick();
+    }
+
+    bool get_input(int controller_num, uint16_t* buttons, float* x, float* y) {
+        if (controller_num > 1) {
+            return false;
+        }
+        if (iss::net::is_active()) {
+            return iss::net::get_synced_input(controller_num, buttons, x, y);
+        }
+        if (controller_num == 0) {
+            read_local_controller(0, buttons, x, y);
+            return true;
+        }
+        if (controller_num == 1 && iss::net::is_2p_active()) {
+            read_local_controller(1, buttons, x, y);
+            return true;
+        }
+        return false;
     }
 
     void set_rumble(int, bool) {}
@@ -390,6 +504,10 @@ namespace {
             // status bit, which is all the game reads here. It identifies the pak itself with its own
             // osMotorInit (recompiled), which correctly reports a memory pak as "not a Rumble Pak".
             auto pak = iss_controller_pak_inserted(0) ? ultramodern::input::Pak::RumblePak : ultramodern::input::Pak::None;
+            return { ultramodern::input::Device::Controller, pak };
+        }
+        if (controller_num == 1 && (iss::net::is_2p_active() || iss_controller_pak_inserted(1))) {
+            auto pak = iss_controller_pak_inserted(1) ? ultramodern::input::Pak::RumblePak : ultramodern::input::Pak::None;
             return { ultramodern::input::Device::Controller, pak };
         }
         return { ultramodern::input::Device::None, ultramodern::input::Pak::None };
@@ -462,13 +580,58 @@ int main(int argc, char** argv) {
         recomp::register_game(game);
     }
 
-    // Arguments: [rom path] [--no-launcher]. A ROM path is validated and stored like one picked in the launcher.
+    // Arguments: [rom path] [--no-launcher] [netplay options: --local-p2, --host [words], --join <words>, ...]
     std::vector<char*> args{ argv[0] };
     bool use_launcher = true;
     const IssVersion* cli_version = nullptr;
+    iss::net::NetConfig net_cfg;
+
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--no-launcher") == 0) {
             use_launcher = false;
+        }
+        else if (std::strcmp(argv[i], "--local-p2") == 0) {
+            net_cfg.mode = iss::net::NET_MODE_LOCAL_2P;
+        }
+        else if (std::strcmp(argv[i], "--host") == 0) {
+            net_cfg.mode = iss::net::NET_MODE_HOST;
+            use_launcher = false;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.room_words = argv[++i];
+            }
+        }
+        else if (std::strcmp(argv[i], "--join") == 0) {
+            net_cfg.mode = iss::net::NET_MODE_JOIN;
+            use_launcher = false;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.room_words = argv[++i];
+            }
+        }
+        else if (std::strcmp(argv[i], "--host-direct") == 0) {
+            net_cfg.mode = iss::net::NET_MODE_HOST_DIRECT;
+            use_launcher = false;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.local_port = (uint16_t)std::atoi(argv[++i]);
+            } else {
+                net_cfg.local_port = 9000;
+            }
+        }
+        else if (std::strcmp(argv[i], "--join-direct") == 0) {
+            net_cfg.mode = iss::net::NET_MODE_JOIN_DIRECT;
+            use_launcher = false;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.direct_addr = argv[++i];
+            }
+        }
+        else if (std::strcmp(argv[i], "--broker") == 0) {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.broker_addr = argv[++i];
+            }
+        }
+        else if (std::strcmp(argv[i], "--delay") == 0) {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                net_cfg.frame_delay = std::atoi(argv[++i]);
+            }
         }
         else if (argv[i][0] != '-') {
             recomp::RomValidationError err;
@@ -487,45 +650,78 @@ int main(int argc, char** argv) {
     if (cli_version != nullptr) {
         settings.version = cli_version->id;
     }
-    const IssVersion* version = nullptr;
-    if (use_launcher) {
-        version = iss::run_launcher(data_dir, settings);
-        if (version == nullptr) {
-            return EXIT_SUCCESS;
+    bool return_to_launcher = false;
+    do {
+        const IssVersion* version = nullptr;
+        if (use_launcher) {
+            version = iss::run_launcher(data_dir, settings);
+            if (version == nullptr) return EXIT_SUCCESS;
+            net_cfg.mode = settings.net_mode;
+            net_cfg.room_words = settings.room_words;
+            net_cfg.region = settings.region;
+            net_cfg.broker_addr = settings.broker_addr;
+        } else {
+            version = iss::stored_version(settings);
+            if (version == nullptr) {
+                fprintf(stderr, "No valid ROM stored; run without --no-launcher (or pass the ROM path) first.\n");
+                return EXIT_FAILURE;
+            }
         }
-    }
-    else {
-        version = iss::stored_version(settings);
-        if (version == nullptr) {
-            fprintf(stderr, "No valid ROM stored; run without --no-launcher (or pass the ROM path) first.\n");
+        fprintf(stderr, "Version: %s\n", version->name);
+        iss_select_version(*version);
+        const char* vi_rate = std::getenv("ISS_VI_RATE");
+        ultramodern::set_vi_rate(vi_rate != nullptr ? (uint32_t)std::atoi(vi_rate) : version->pal ? 50 : 60);
+        version->register_overlays();
+
+        static char game_flag[] = "--game";
+        std::vector<char*> game_args = args;
+        game_args.push_back(game_flag);
+        game_args.push_back(const_cast<char*>(version->mod_game_id));
+
+        reset_audio();
+        apply_graphics_config(settings);
+        // Online peers must run identical game code paths: same player LOD, the shared online Controller Pak.
+        const bool online = net_cfg.mode != iss::net::NET_MODE_OFFLINE && net_cfg.mode != iss::net::NET_MODE_LOCAL_2P;
+        iss_set_full_player_detail(online ? 1 : settings.full_detail);
+        iss_controller_pak_set_online(online);
+
+        if (net_cfg.mode != iss::net::NET_MODE_OFFLINE && !iss::net::init(net_cfg, version->id)) {
+            fprintf(stderr, "[Netplay] Failed to initialize netplay session.\n");
             return EXIT_FAILURE;
         }
-    }
-    fprintf(stderr, "Version: %s\n", version->name);
-    iss_select_version(*version);
-    // ISS_VI_RATE=<hz> overrides the version's VI rate (debugging, PAL speed comparisons).
-    const char* vi_rate = std::getenv("ISS_VI_RATE");
-    ultramodern::set_vi_rate(vi_rate != nullptr ? (uint32_t)std::atoi(vi_rate) : version->pal ? 50 : 60);
-    version->register_overlays();
+        update_cull_widen_factor();  // fixed online value before the game's first frame
 
-    static char game_flag[] = "--game";
-    args.push_back(game_flag);
-    args.push_back(const_cast<char*>(version->mod_game_id));
+        recomp::Configuration cfg{};
+        cfg.argc = (int)game_args.size();
+        cfg.argv = game_args.data();
+        cfg.rsp_callbacks = { .get_rsp_microcode = get_rsp_microcode };
+        cfg.renderer_callbacks = { .create_render_context = iss::renderer::create_render_context };
+        cfg.audio_callbacks = { .queue_samples = queue_samples, .get_frames_remaining = get_frames_remaining, .set_frequency = set_frequency };
+        cfg.input_callbacks = { .poll_input = poll_input, .get_input = get_input, .set_rumble = set_rumble, .get_connected_device_info = get_connected_device_info };
+        cfg.gfx_callbacks = { .create_gfx = create_gfx, .create_window = create_window, .update_gfx = update_gfx };
+        if (net_cfg.mode != iss::net::NET_MODE_OFFLINE && net_cfg.mode != iss::net::NET_MODE_LOCAL_2P) {
+            cfg.events_callbacks.vi_callback = net_vi_tick;
+        }
+        cfg.error_handling_callbacks = { .message_box = message_box };
 
-    reset_audio();
-    apply_graphics_config(settings);
-    iss_set_full_player_detail(settings.full_detail);
-
-    recomp::Configuration cfg{};
-    cfg.argc = (int)args.size();
-    cfg.argv = args.data();
-    cfg.rsp_callbacks = { .get_rsp_microcode = get_rsp_microcode };
-    cfg.renderer_callbacks = { .create_render_context = iss::renderer::create_render_context };
-    cfg.audio_callbacks = { .queue_samples = queue_samples, .get_frames_remaining = get_frames_remaining, .set_frequency = set_frequency };
-    cfg.input_callbacks = { .poll_input = poll_input, .get_input = get_input, .set_rumble = set_rumble, .get_connected_device_info = get_connected_device_info };
-    cfg.gfx_callbacks = { .create_gfx = create_gfx, .create_window = create_window, .update_gfx = update_gfx };
-    cfg.error_handling_callbacks = { .message_box = message_box };
-
-    recomp::start(cfg);
+        recomp::start(cfg);
+        if (audio_device != 0) {
+            SDL_PauseAudioDevice(audio_device, 1);
+            SDL_CloseAudioDevice(audio_device);
+            audio_device = 0;
+        }
+        if (audio_stream != nullptr) {
+            SDL_FreeAudioStream(audio_stream);
+            audio_stream = nullptr;
+        }
+        return_to_launcher = iss::net::should_return_to_launcher();
+        iss::net::shutdown();
+        if (return_to_launcher) {
+            settings.net_mode = iss::net::NET_MODE_OFFLINE;
+            settings.room_words.clear();
+            net_cfg.mode = iss::net::NET_MODE_OFFLINE;
+            use_launcher = true;
+        }
+    } while (return_to_launcher);
     return EXIT_SUCCESS;
 }

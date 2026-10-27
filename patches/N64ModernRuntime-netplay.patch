@@ -1,0 +1,54 @@
+diff --git a/librecomp/src/recomp.cpp b/librecomp/src/recomp.cpp
+index 850689d..39d4fa7 100644
+--- a/librecomp/src/recomp.cpp
++++ b/librecomp/src/recomp.cpp
+@@ -895,6 +895,10 @@ void parse_cli(int argc, char **argv) {
+ }
+ 
+ void recomp::start(const recomp::Configuration& cfg) {
++    // This host application may return to its launcher and start another game session after a
++    // netplay timeout. Reset the process-wide run state before creating the new runtime threads.
++    exited.store(false);
++    game_status.store(GameStatus::None);
+     project_version = cfg.project_version;
+ 
+     recomp::check_all_stored_roms();
+diff --git a/ultramodern/src/events.cpp b/ultramodern/src/events.cpp
+index 0b40c28..2f3bee3 100644
+--- a/ultramodern/src/events.cpp
++++ b/ultramodern/src/events.cpp
+@@ -205,8 +206,19 @@ void vi_thread_func() {
+     int remaining_retraces = 1;
+ 
+     while (!exited) {
+-        // Determine the next VI time (more accurate than adding 16ms each VI interrupt)
+-        auto next = ultramodern::get_start() + (total_vis * 1000000us) / (vi_rate * ultramodern::get_speed_multiplier());
++        // Online lockstep waits for the peer at the end of each VI. Pace the next VI
++        // relative to that wait, or the absolute process clock would make the runtime
++        // burst through missed ticks to catch up after any network delay.
++        const bool lockstep_vi = events_callbacks.vi_callback != nullptr;
++        std::chrono::high_resolution_clock::time_point next;
++        if (lockstep_vi) {
++            auto vi_period = 1000000us / (vi_rate * ultramodern::get_speed_multiplier());
++            next = std::chrono::high_resolution_clock::now() +
++                   std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(vi_period);
++        } else {
++            next = ultramodern::get_start() +
++                   (total_vis * 1000000us) / (vi_rate * ultramodern::get_speed_multiplier());
++        }
+         //if (next > std::chrono::high_resolution_clock::now()) {
+         //    printf("Sleeping for %" PRIu64 " us to get from %" PRIu64 " us to %" PRIu64 " us \n",
+         //        (next - std::chrono::high_resolution_clock::now()) / 1us,
+@@ -221,9 +233,10 @@ void vi_thread_func() {
+             next = std::chrono::high_resolution_clock::now();
+         }
+         ultramodern::sleep_until(next);
+-        auto time_now = ultramodern::time_since_start();
+         // Calculate how many VIs have passed
+-        uint64_t new_total_vis = (time_now * (vi_rate * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
++        uint64_t new_total_vis = lockstep_vi
++            ? total_vis + 1
++            : (ultramodern::time_since_start() * (vi_rate * ultramodern::get_speed_multiplier()) / 1000ms) + 1;
+         if (new_total_vis > total_vis + 1) {
+             //printf("Skipped % " PRId64 " frames in VI interupt thread!\n", new_total_vis - total_vis - 1);
+         }

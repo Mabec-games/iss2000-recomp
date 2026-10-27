@@ -4,6 +4,9 @@
 
 #include "recomp.h"
 #include "librecomp/game.hpp"
+#include "iss_netplay.h"
+
+extern "C" uint32_t osGetCount();
 
 extern "C" void __osSiDeviceBusy_recomp(uint8_t* rdram, recomp_context* ctx) {
     ctx->r2 = 0;
@@ -28,4 +31,15 @@ extern "C" void osPiReadIo_recomp(uint8_t* rdram, recomp_context* ctx) {
 // osPiWriteIo(devAddr, data): only used for IS-Viewer output; dropped.
 extern "C" void osPiWriteIo_recomp(uint8_t* rdram, recomp_context* ctx) {
     ctx->r2 = 0;
+}
+
+// Game code's osGetCount (renamed from osGetCount_recomp in the recompiled libraries, see CMakeLists.txt).
+// The game seeds its RNGs from it (func_80008F20, func_80016448 and in the match overlay), so online
+// play substitutes a clock both peers agree on.
+extern "C" void iss_game_osGetCount_recomp(uint8_t* rdram, recomp_context* ctx) {
+    uint32_t count;
+    if (!iss::net::get_game_count(&count)) {
+        count = osGetCount();
+    }
+    ctx->r2 = count;
 }

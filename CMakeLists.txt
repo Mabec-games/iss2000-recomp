@@ -85,6 +85,8 @@ function(iss_add_recompiled version funcs_dir)
     add_custom_command(TARGET ${lib} POST_BUILD
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/prefix_syms.py $<TARGET_FILE:${lib}> ${version}_
             ${ISS_NM} ${ISS_OBJCOPY}
+        # Game calls to osGetCount go to the host (src/iss_ultra_replacements.cpp): deterministic clock online.
+        COMMAND ${ISS_OBJCOPY} --redefine-sym osGetCount_recomp=iss_game_osGetCount_recomp $<TARGET_FILE:${lib}>
         VERBATIM
     )
 endfunction()
@@ -124,6 +126,7 @@ add_executable(ISS2000Recompiled
     src/iss_controller_pak.cpp
     src/rt64_render_context.cpp
     src/launcher.cpp
+    src/iss_netplay.cpp
     ${LAUNCHER_ASSETS_H}
 )
 target_compile_options(ISS2000Recompiled PRIVATE ${ISS_ARCH_FLAGS} -fno-strict-aliasing)
@@ -165,7 +168,7 @@ if (WIN32)
     target_compile_definitions(ISS2000Recompiled PRIVATE NOMINMAX)
     # RT64 links SDL2 by bare name with a directory-scoped link_directories(), which doesn't reach this target.
     target_link_directories(ISS2000Recompiled PRIVATE ${CMAKE_SOURCE_DIR}/ext/rt64/src/contrib/mupen64plus-win32-deps/SDL2-2.26.3/lib/x64)
-    target_link_libraries(ISS2000Recompiled PRIVATE SDL2::SDL2main)
+    target_link_libraries(ISS2000Recompiled PRIVATE SDL2::SDL2main ws2_32)
     set(APP_ICON_ICO ${CMAKE_BINARY_DIR}/gen/iss2000recomp.ico)
     set(APP_ICON_RC ${CMAKE_BINARY_DIR}/gen/iss2000recomp.rc)
     add_custom_command(

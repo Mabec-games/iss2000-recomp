@@ -26,6 +26,26 @@ the launcher detects which one you give it:
 `.z64`, `.n64` and `.v64` byte orders are all accepted. The European versions have their own languages (set under
 Option > Language) and a harder single-player game.
 
+## New in v1.4: Online 1 vs 1
+Play a match against a friend over the internet or your local network, each on their own computer.
+- **Click Online in the launcher, then Host or Join.** The host gets a short, soccer-themed pass phrase such as
+  `EU-STRIKER-VOLLEY-HEADER-GOAL` (copy it with one click) and sends it to their friend. The friend pastes it in
+  Join and the match starts on both machines. No port forwarding or IP addresses needed.
+- **Finds the fastest route automatically.** Connections are set up through UDP hole punching, and if both players
+  are on the same network they find each other directly on the LAN.
+- **Both games stay in sync.** Controller input is exchanged in lockstep with a small input delay and redundant
+  packets, so dropped packets are recovered without a hitch. The game's random events (decisions, bounces, AI)
+  play out identically on both machines, and each side checks this continuously.
+- **Online Controller Pak**: online matches have their own pak (`controllerpak_online_p1.mpk`, separate from your
+  normal saves), so you can save your progress together. It stays identical on both machines as long as you keep
+  playing online with the same friend.
+- **Smooth audio online**: a deeper audio buffer keeps sound clean through small network hiccups.
+- The host is player 1, the joining player is player 2. Both players need the same game version (USA, Europe
+  En,De or Fr,It) and v1.4 or later. If the connection drops for 5 seconds, both games return to the launcher.
+- You can also join by typing the host's IP address instead of the pass phrase (port 9099 by default).
+
+See [online.md](online.md) for how it works and command-line options.
+
 ## New in v1.3: full-detail players
 On the N64, players further from the camera were drawn with simpler, lower-polygon models (a level-of-detail
 filter that saved memory and rendering time): blocky bodies, no hands, flat heads. In a match even the nearest
@@ -56,6 +76,7 @@ v1.2 adds support for both European (PAL) releases of the game, in the same AppI
   extended to the full width; HUD stays in its original layout
 - **Full-detail players** at any distance (no N64 level-of-detail models; launcher option)
 - Window-scaled resolution, 4x MSAA
+- **Online 1 vs 1** over the internet or LAN, with pass-phrase matchmaking
 - Controller Pak saves (raw 32 KB `.mpk`, Project64-compatible), kept separately per version
 - Launcher: ROM selection (file picker or drag & drop), version choice when several ROMs are stored,
   Fullscreen/Widescreen/Detail options
@@ -83,12 +104,15 @@ Gamepad or keyboard (arrows/WASD stick, X = A, C = B, Z = Z, Enter = Start, Q/E 
   high-refresh-rate monitors (e.g. 144/240 Hz) it can make the game run at double speed. If you play fullscreen on
   v1.0, set Resolution to Low in the game's options (v1.1 and later do this automatically).
 - No rumble; no controller remapping yet.
+- Online: pass-phrase matchmaking needs both networks to allow UDP hole punching (most home routers do); there
+  is no relay fallback for very strict NATs, so use direct IP with port forwarding in that case. During online
+  matches player detail is always Full on both sides.
 
 ## Building
 See [NOTES.md](NOTES.md) for the full pipeline (overlay discovery, symbol generation, recompilation, hooks,
 Debian 12 portable build, AppImage packaging). Third-party sources go in `ext/` (N64Recomp, N64ModernRuntime,
-RT64; see NOTES.md); apply `patches/N64ModernRuntime-vi-rate.patch` to N64ModernRuntime (50 Hz support for the
-European versions). Generated code is produced locally from your ROMs and is not part of this repository.
+RT64; see NOTES.md); apply `patches/N64ModernRuntime-vi-rate.patch` (50 Hz support for the European versions) and
+then `patches/N64ModernRuntime-netplay.patch` (online VI pacing, restart after a match) to N64ModernRuntime. Generated code is produced locally from your ROMs and is not part of this repository.
 
 Windows: with Visual Studio 2022 (Build Tools: "Desktop development with C++" + "C++ Clang tools for Windows") and
 Python 3, run `tools\build_windows.bat` (clang-cl + Ninja, output in `build-win\`), then
