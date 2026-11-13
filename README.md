@@ -93,6 +93,53 @@ Get it from [Releases](../../releases).
 Gamepad or keyboard (arrows/WASD stick, X = A, C = B, Z = Z, Enter = Start, Q/E = L/R, IJKL = C buttons).
 **F11** toggles fullscreen, **Esc** quits.
 
+### Measured generic N64 USB pad on Windows
+
+For the red transparent `0079:0006` pad with the raw layout below, download
+[generic-n64-windows.txt](docs/controllers/generic-n64-windows.txt) beside
+`ISS2000Recompiled.exe`. From that folder, launch in PowerShell:
+
+```powershell
+$previousProfile = $env:SDL_GAMECONTROLLERCONFIG_FILE
+$env:SDL_GAMECONTROLLERCONFIG_FILE = (Resolve-Path '.\generic-n64-windows.txt').Path
+try {
+    & '.\ISS2000Recompiled.exe'
+} finally {
+    $env:SDL_GAMECONTROLLERCONFIG_FILE = $previousProfile
+}
+```
+
+An existing SDL_GAMECONTROLLERCONFIG mapping can override this file; remove
+that competing value from the launch shell if needed.
+
+This adapter matches this port's fixed bindings in `src/main.cpp`: physical
+A/B become SDL A/X, R becomes right shoulder, Z becomes left trigger, C buttons
+become signed right-stick axes, and the stick and D-pad retain their roles.
+**Physical L becomes SDL Back because this port reads SDL Back as N64 L.**
+It is the measured L button, not an invented Select button; mapping it to SDL
+left shoulder would send N64 Z instead. Z remains Z. This is specific to
+ISS2000 and should not be used as a general SDL or RecompFrontend profile.
+
+In the launcher, physical A or Start confirms; use the D-pad to move focus.
+The launcher reads SDL B for its Back action, so neither physical L (SDL Back)
+nor physical B (SDL X) takes that action. Use **Esc** to go back in the
+launcher. In game,
+**Esc quits** and **F11 toggles fullscreen**; no settings shortcut is added.
+
+Only use the file if your zero-based raw inputs match: A/B/Start/Z/L/R =
+buttons 5/4/9/8/6/7; C up/right/down/left = buttons 0/1/2/3; stick = axes 0/1;
+D-pad = hat 0. Native Windows SDL reported 4 axes, 12 buttons and 1 hat.
+Other clones share VID/PID and CRCs, so loading remains opt-in. Launch normally
+without this variable to stop using the adapter. It does not change the
+program's existing deadzone or system-wide settings.
+
+Measurements supplied by MatyMeatBoy on 2026-11-11: user-recorded physical
+assignments, native SDL identification and virtual SDL mapping checks. CRCs
+`8630`, `8e4f`, `79be` were observed with SDL2 2.32.10, SDL2 2.26.3 and SDL3
+3.4.18 respectively; ISS2000 itself uses SDL2. The adapter has not been
+physically play-tested in ISS2000; virtual mapping tests do not establish
+gameplay compatibility.
+
 ## Notes
 - The European versions run at 50 Hz like on a PAL console (matches at 25 fps instead of 30). Their game speed, match
   clock and audio are tuned for that, so they play at the intended speed; they can't run at 60 Hz.
