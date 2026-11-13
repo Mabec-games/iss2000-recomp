@@ -7,7 +7,7 @@
 #include "librecomp/game.hpp"
 #include "iss_netplay.h"
 
-#define ISS_APP_NAME "Mabecs International Superstar Soccer 2000 - Widescreen build"
+#define ISS_APP_NAME "Mabecs International Superstar Soccer 2000 - v1.4"
 
 struct SDL_Window;
 struct IssVersion;

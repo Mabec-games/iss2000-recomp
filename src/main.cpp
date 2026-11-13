@@ -227,7 +227,7 @@ namespace {
         audio_stream = SDL_NewAudioStream(AUDIO_F32, 2, game_sample_rate, AUDIO_F32, 2, output_sample_rate);
     }
 
-    void reset_audio() {
+    void reset_audio(bool online) {
         SDL_InitSubSystem(SDL_INIT_AUDIO);
         if (audio_device != 0) {
             SDL_PauseAudioDevice(audio_device, 1);
@@ -238,7 +238,11 @@ namespace {
         desired.freq = output_sample_rate;
         desired.format = AUDIO_F32;
         desired.channels = 2;
-        desired.samples = 1024;
+        // Offline keeps the small 256-sample device buffer. With 1024 the device drains the queue in ~21 ms
+        // chunks, so get_frames_remaining() sees large swings with only the 2-VI cushion; the game then sees
+        // more audio queued than it expects and computes negative buffer lengths. That was the v1.4 Windows
+        // regression: crackles, slowdown, crashes. Online play uses a 6-VI cushion, which absorbs the bigger buffer.
+        desired.samples = online ? 1024 : 0x100;
         audio_device = SDL_OpenAudioDevice(nullptr, false, &desired, nullptr, 0);
         if (audio_device == 0) {
             fprintf(stderr, "SDL error opening audio device: %s\n", SDL_GetError());
@@ -678,10 +682,10 @@ int main(int argc, char** argv) {
         game_args.push_back(game_flag);
         game_args.push_back(const_cast<char*>(version->mod_game_id));
 
-        reset_audio();
-        apply_graphics_config(settings);
         // Online peers must run identical game code paths: same player LOD, the shared online Controller Pak.
         const bool online = net_cfg.mode != iss::net::NET_MODE_OFFLINE && net_cfg.mode != iss::net::NET_MODE_LOCAL_2P;
+        reset_audio(online);
+        apply_graphics_config(settings);
         iss_set_full_player_detail(online ? 1 : settings.full_detail);
         iss_controller_pak_set_online(online);
 
