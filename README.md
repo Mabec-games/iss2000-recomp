@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/logo.png" alt="Mabecs International Superstar Soccer 2000" width="640"></p>
 
-# Mabecs International Superstar Soccer 2000 - Widescreen build
+# Mabecs International Superstar Soccer 2000
 
 **A true widescreen version of the Nintendo 64 classic.** The original game was made for 4:3 TVs; this build renders
 the full 16:9 (or wider) view at your screen's resolution. Players and the ball stay visible all the way to the edges
