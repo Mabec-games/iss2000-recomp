@@ -26,6 +26,14 @@ the launcher detects which one you give it:
 `.z64`, `.n64` and `.v64` byte orders are all accepted. The European versions have their own languages (set under
 Option > Language) and a harder single-player game.
 
+## New in v1.5
+- **Windows offline audio fix**: restores the 256-sample audio device buffer for offline and local 2-player play
+  (while keeping the deeper 1024-sample buffer for online matches), fixing the v1.4 Windows audio crackles,
+  slowdown, and crashes.
+- **Launcher & window title**: displays the release version (`v1.5`) in the window titlebar.
+- **Measured generic N64 USB pad adapter (Windows)**: adds an opt-in SDL mapping file
+  ([generic-n64-windows.txt](docs/controllers/generic-n64-windows.txt)) and launch instructions below.
+
 ## New in v1.4: Online 1 vs 1
 Play a match against a friend over the internet or your local network, each on their own computer.
 - **Click Online in the launcher, then Host or Join.** The host gets a short, soccer-themed pass phrase such as
